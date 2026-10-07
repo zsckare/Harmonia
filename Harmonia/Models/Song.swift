@@ -1,83 +1,62 @@
 import Foundation
 
-/// Represents a song available inside Harmonia.
-/// Representa una canción disponible dentro de Harmonia.
-struct Song: Identifiable, Hashable {
-    let id: UUID
-    let title: String
-    let artist: String
-    let album: String
-    let duration: TimeInterval
-    let artworkSymbol: String
+/// Playback-ready domain model. / Modelo de dominio listo para reproducción.
+struct Song: Identifiable, Hashable, Codable, Sendable {
+  enum Source: Hashable, Codable, Sendable {
+    case bundle(resource: String, ext: String)
+    case file(path: String)
+  }
+  let id: UUID
+  var title: String
+  var artist: String
+  var album: String
+  var duration: TimeInterval
+  var artworkSymbol: String
+  var artworkData: Data?
+  var source: Source
+  var dateAdded: Date
 
-    /// Name of the bundled audio file without its extension.
-    /// Nombre del archivo de audio incluido en el bundle, sin extensión.
-    let audioResource: String
-
-    /// Extension of the bundled audio file.
-    /// Extensión del archivo de audio incluido en el bundle.
-    let audioExtension: String
-
-    init(
-        id: UUID = UUID(),
-        title: String,
-        artist: String,
-        album: String,
-        duration: TimeInterval,
-        artworkSymbol: String = "music.note",
-        audioResource: String,
-        audioExtension: String = "mp3"
-    ) {
-        self.id = id
-        self.title = title
-        self.artist = artist
-        self.album = album
-        self.duration = duration
-        self.artworkSymbol = artworkSymbol
-        self.audioResource = audioResource
-        self.audioExtension = audioExtension
+  init(
+    id: UUID = UUID(), title: String, artist: String, album: String, duration: TimeInterval,
+    artworkSymbol: String = "music.note", artworkData: Data? = nil, source: Source,
+    dateAdded: Date = .now
+  ) {
+    self.id = id
+    self.title = title
+    self.artist = artist
+    self.album = album
+    self.duration = duration
+    self.artworkSymbol = artworkSymbol
+    self.artworkData = artworkData
+    self.source = source
+    self.dateAdded = dateAdded
+  }
+  var formattedDuration: String { duration.formattedPlaybackTime }
+  var playbackURL: URL? {
+    switch source {
+    case .bundle(let resource, let ext):
+      return Bundle.main.url(forResource: resource, withExtension: ext)
+    case .file(let path): return URL(fileURLWithPath: path)
     }
-
-    /// Human-readable duration used by the interface.
-    /// Duración legible utilizada por la interfaz.
-    var formattedDuration: String {
-        duration.formattedPlaybackTime
-    }
+  }
 }
 
 extension Song {
-    /// Real bundled tracks used during the audio-engine phase.
-    /// Tracks reales incluidos durante la fase del motor de audio.
-    static let demoLibrary: [Song] = [
-        Song(
-            title: "Rendezvous",
-            artist: "Harmonia Sessions",
-            album: "Harmonia Demo",
-            duration: 123,
-            artworkSymbol: "waveform.path.ecg",
-            audioResource: "track-1"
-        ),
-        Song(
-            title: "Horizons",
-            artist: "Harmonia Sessions",
-            album: "Harmonia Demo",
-            duration: 90,
-            artworkSymbol: "sun.horizon.fill",
-            audioResource: "track-2"
-        )
-    ]
-
-    /// Kept as an alias so existing previews/components remain simple.
-    /// Se conserva como alias para mantener simples los previews/componentes existentes.
-    static let mockLibrary = demoLibrary
+  static let demoLibrary: [Song] = [
+    Song(
+      title: "Rendezvous", artist: "Harmonia Sessions", album: "Harmonia Demo", duration: 123,
+      artworkSymbol: "waveform.path.ecg", source: .bundle(resource: "track-1", ext: "mp3")),
+    Song(
+      title: "Horizons", artist: "Harmonia Sessions", album: "Harmonia Demo", duration: 90,
+      artworkSymbol: "sun.horizon.fill", source: .bundle(resource: "track-2", ext: "mp3")),
+  ]
+  static let mockLibrary = demoLibrary
 }
 
 extension TimeInterval {
-    /// Formats seconds as m:ss for playback UI.
-    /// Formatea segundos como m:ss para la interfaz de reproducción.
-    var formattedPlaybackTime: String {
-        guard isFinite, self >= 0 else { return "0:00" }
-        let totalSeconds = Int(self.rounded(.down))
-        return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
-    }
+  var formattedPlaybackTime: String {
+    guard isFinite, self >= 0 else { return "0:00" }
+    let s = Int(rounded(.down))
+    return String(format: "%d:%02d", s / 60, s % 60)
+  }
 }

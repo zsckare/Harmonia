@@ -1,49 +1,34 @@
 import AVFoundation
 
-/// Low-level wrapper around AVAudioPlayer.
-/// Wrapper de bajo nivel alrededor de AVAudioPlayer.
-@MainActor
-final class AudioPlayerService {
-    private var player: AVAudioPlayer?
-    var currentTime: TimeInterval { player?.currentTime ?? 0 }
-    var duration: TimeInterval { player?.duration ?? 0 }
-    var isPlaying: Bool { player?.isPlaying ?? false }
-
-    /// Loads a bundled song and prepares it for playback.
-    /// Carga una canción del bundle y la prepara para reproducción.
-    func load(_ song: Song) throws {
-        guard let url = Bundle.main.url(
-            forResource: song.audioResource,
-            withExtension: song.audioExtension
-        ) else {
-            throw AudioPlayerError.resourceNotFound(song.audioResource)
-        }
-
-        let newPlayer = try AVAudioPlayer(contentsOf: url)
-        newPlayer.prepareToPlay()
-        player = newPlayer
+/// Low-level AVAudioPlayer wrapper. / Wrapper de bajo nivel de AVAudioPlayer.
+@MainActor final class AudioPlayerService {
+  private var player: AVAudioPlayer?
+  var currentTime: TimeInterval { player?.currentTime ?? 0 }
+  var duration: TimeInterval { player?.duration ?? 0 }
+  var isPlaying: Bool { player?.isPlaying ?? false }
+  var volume: Float {
+    get { player?.volume ?? 1 }
+    set { player?.volume = newValue }
+  }
+  func load(_ song: Song) throws {
+    guard let url = song.playbackURL, FileManager.default.fileExists(atPath: url.path) else {
+      throw AudioPlayerError.resourceNotFound(song.title)
     }
-
-    func play() { player?.play() }
-    func pause() { player?.pause() }
-
-    /// Moves playback to an absolute position in seconds.
-    /// Mueve la reproducción a una posición absoluta en segundos.
-    func seek(to time: TimeInterval) {
-        guard let player else { return }
-        player.currentTime = min(max(time, 0), player.duration)
-    }
-
-
+    let next = try AVAudioPlayer(contentsOf: url)
+    next.prepareToPlay()
+    player = next
+  }
+  func play() { player?.play() }
+  func pause() { player?.pause() }
+  func seek(to time: TimeInterval) {
+    guard let player else { return }
+    player.currentTime = min(max(time, 0), player.duration)
+  }
 }
-
 enum AudioPlayerError: LocalizedError {
-    case resourceNotFound(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .resourceNotFound(let resource):
-            return "Audio resource '\(resource)' was not found in the app bundle."
-        }
-    }
+  case resourceNotFound(String)
+  var errorDescription: String? {
+    if case .resourceNotFound(let s) = self { return "Audio for ‘\(s)’ could not be found." }
+    return nil
+  }
 }

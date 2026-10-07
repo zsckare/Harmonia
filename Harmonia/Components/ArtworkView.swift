@@ -1,42 +1,25 @@
-//
-//  ArtworkView.swift
-//  Harmonia
-//
-//  Created by Antonio Alvarez on 07/10/26.
-//
-
-
-
-
 import SwiftUI
 
-/// Displays temporary artwork until Harmonia reads real album covers.
-/// Muestra artwork temporal hasta que Harmonia lea portadas reales.
+#if canImport(UIKit)
+  import UIKit
+#endif
+/// Reusable artwork supporting embedded images and generated fallbacks.
+/// Artwork reutilizable con imagen embebida y fallback generado.
 struct ArtworkView: View {
-    let song: Song
-    var size: CGFloat = 58
-
-    var body: some View {
+  let song: Song
+  let size: CGFloat
+  var body: some View {
+    Group {
+      if let data = song.artworkData, let image = UIImage(data: data) {
+        Image(uiImage: image).resizable().scaledToFill()
+      } else {
         ZStack {
-            HarmoniaTheme.accentGradient
-
-            Circle()
-                .fill(.white.opacity(0.10))
-                .frame(width: size * 0.72)
-                .blur(radius: size * 0.12)
-
-            Image(systemName: song.artworkSymbol)
-                .font(.system(size: size * 0.34, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.92))
+          HarmoniaTheme.gradient(for: song)
+          Image(systemName: song.artworkSymbol).font(.system(size: size * 0.3, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.9))
         }
-        .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
-                .stroke(.white.opacity(0.12), lineWidth: 1)
-        }
-        .shadow(color: .purple.opacity(0.22), radius: 14, y: 8)
-        .accessibilityHidden(true)
-    }
+      }
+    }.frame(width: size, height: size).clipShape(
+      RoundedRectangle(cornerRadius: HarmoniaTheme.artworkRadius, style: .continuous))
+  }
 }
-
