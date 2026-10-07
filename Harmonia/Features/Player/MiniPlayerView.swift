@@ -1,35 +1,24 @@
-//
-//  MiniPlayerView.swift
-//  Harmonia
-//
-//  Created by Antonio Alvarez on 07/10/26.
-//
-
-
-
-
 import SwiftUI
 
 /// Compact player that stays visible above the main tab bar.
 /// Reproductor compacto que permanece visible sobre la barra principal.
 struct MiniPlayerView: View {
-    let song: Song
-    @Binding var isPlaying: Bool
+    let player: PlayerViewModel
     let onOpenPlayer: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
             Button(action: onOpenPlayer) {
                 HStack(spacing: 12) {
-                    ArtworkView(song: song, size: 48)
+                    ArtworkView(song: player.currentSong, size: 48)
 
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(song.title)
+                        Text(player.currentSong.title)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
 
-                        Text(song.artist)
+                        Text(player.currentSong.artist)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -41,19 +30,17 @@ struct MiniPlayerView: View {
 
             Spacer(minLength: 8)
 
-            Button {
-                isPlaying.toggle()
-            } label: {
-                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+            Button { player.togglePlayback() } label: {
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                     .font(.title3.weight(.bold))
                     .contentTransition(.symbolEffect(.replace))
                     .frame(width: 38, height: 38)
                     .background(.white.opacity(0.10), in: Circle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(isPlaying ? "Pause" : "Play")
+            .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
 
-            Button(action: {}) {
+            Button { player.playNext() } label: {
                 Image(systemName: "forward.fill")
                     .font(.body.weight(.semibold))
                     .frame(width: 34, height: 38)
@@ -67,4 +54,3 @@ struct MiniPlayerView: View {
         .padding(.bottom, 4)
     }
 }
-

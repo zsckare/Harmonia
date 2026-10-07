@@ -1,13 +1,10 @@
-
-
-
 import SwiftUI
 
 /// Main library experience for Harmonia.
 /// Experiencia principal de biblioteca de Harmonia.
 struct LibraryView: View {
     let songs: [Song]
-    @Binding var currentSong: Song
+    let player: PlayerViewModel
 
     var body: some View {
         ScrollView {
@@ -44,10 +41,8 @@ struct LibraryView: View {
 
             ScrollView(.horizontal) {
                 HStack(spacing: 14) {
-                    ForEach(Array(songs.prefix(4))) { song in
-                        Button {
-                            currentSong = song
-                        } label: {
+                    ForEach(songs) { song in
+                        Button { player.play(song) } label: {
                             VStack(alignment: .leading, spacing: 10) {
                                 ArtworkView(song: song, size: 142)
 
@@ -76,29 +71,21 @@ struct LibraryView: View {
             sectionTitle("Songs")
 
             ForEach(songs) { song in
-                SongRow(
-                    song: song,
-                    isCurrentSong: song.id == currentSong.id
-                ) {
-                    currentSong = song
+                SongRow(song: song, isCurrentSong: song.id == player.currentSong.id) {
+                    player.play(song)
                 }
             }
         }
     }
 
     private func sectionTitle(_ title: String) -> some View {
-        Text(title)
-            .font(.title3.weight(.bold))
+        Text(title).font(.title3.weight(.bold))
     }
 }
 
 #Preview {
     NavigationStack {
-        LibraryView(
-            songs: Song.mockLibrary,
-            currentSong: .constant(Song.mockLibrary[0])
-        )
+        LibraryView(songs: Song.demoLibrary, player: PlayerViewModel())
     }
     .preferredColorScheme(.dark)
 }
-

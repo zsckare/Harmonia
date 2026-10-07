@@ -1,28 +1,16 @@
-//
-//  ContentView.swift
-//  Harmonia
-//
-//  Created by Antonio Alvarez on 07/10/26.
-//
-
-
-
 import SwiftUI
 
 /// Root navigation container for Harmonia.
 /// Contenedor raíz de navegación de Harmonia.
 struct ContentView: View {
-    private let songs = Song.mockLibrary
-
-    @State private var currentSong = Song.mockLibrary[0]
-    @State private var isPlaying = false
+    @State private var player = PlayerViewModel()
     @State private var isShowingNowPlaying = false
 
     var body: some View {
         TabView {
             Tab("Library", systemImage: "music.note.house") {
                 NavigationStack {
-                    LibraryView(songs: songs, currentSong: $currentSong)
+                    LibraryView(songs: player.queue, player: player)
                 }
             }
 
@@ -40,16 +28,27 @@ struct ContentView: View {
         }
         .tabViewBottomAccessory {
             MiniPlayerView(
-                song: currentSong,
-                isPlaying: $isPlaying,
+                player: player,
                 onOpenPlayer: { isShowingNowPlaying = true }
             )
         }
         .fullScreenCover(isPresented: $isShowingNowPlaying) {
-            NowPlayingView(song: currentSong, isPlaying: $isPlaying)
+            NowPlayingView(player: player)
+        }
+        .alert("Playback Error", isPresented: playbackErrorPresented) {
+            Button("OK") { player.clearError() }
+        } message: {
+            Text(player.errorMessage ?? "Unknown playback error.")
         }
         .tint(.white)
         .preferredColorScheme(.dark)
+    }
+
+    private var playbackErrorPresented: Binding<Bool> {
+        Binding(
+            get: { player.errorMessage != nil },
+            set: { if !$0 { player.clearError() } }
+        )
     }
 
     /// Temporary screen used until each feature gets its own implementation.
@@ -75,4 +74,3 @@ struct ContentView: View {
 #Preview {
     ContentView()
 }
-

@@ -10,13 +10,23 @@ struct Song: Identifiable, Hashable {
     let duration: TimeInterval
     let artworkSymbol: String
 
+    /// Name of the bundled audio file without its extension.
+    /// Nombre del archivo de audio incluido en el bundle, sin extensión.
+    let audioResource: String
+
+    /// Extension of the bundled audio file.
+    /// Extensión del archivo de audio incluido en el bundle.
+    let audioExtension: String
+
     init(
         id: UUID = UUID(),
         title: String,
         artist: String,
         album: String,
         duration: TimeInterval,
-        artworkSymbol: String = "music.note"
+        artworkSymbol: String = "music.note",
+        audioResource: String,
+        audioExtension: String = "mp3"
     ) {
         self.id = id
         self.title = title
@@ -24,25 +34,50 @@ struct Song: Identifiable, Hashable {
         self.album = album
         self.duration = duration
         self.artworkSymbol = artworkSymbol
+        self.audioResource = audioResource
+        self.audioExtension = audioExtension
     }
 
     /// Human-readable duration used by the interface.
     /// Duración legible utilizada por la interfaz.
     var formattedDuration: String {
-        let totalSeconds = Int(duration)
-        return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
+        duration.formattedPlaybackTime
     }
 }
 
 extension Song {
-    /// Temporary catalog used while the real music library is not connected.
-    /// Catálogo temporal usado mientras no conectamos la biblioteca real.
-    static let mockLibrary: [Song] = [
-        Song(title: "Midnight Drive", artist: "The Harmonics", album: "Night Sessions", duration: 245, artworkSymbol: "moon.stars.fill"),
-        Song(title: "Ocean Lights", artist: "Aurora Waves", album: "Horizons", duration: 198, artworkSymbol: "water.waves"),
-        Song(title: "Lost in Echoes", artist: "Northern Sky", album: "Reflections", duration: 221, artworkSymbol: "waveform"),
-        Song(title: "Neon Hearts", artist: "Velvet Static", album: "After Hours", duration: 214, artworkSymbol: "heart.fill"),
-        Song(title: "Golden Hour", artist: "Solstice", album: "Daylight", duration: 232, artworkSymbol: "sun.max.fill")
+    /// Real bundled tracks used during the audio-engine phase.
+    /// Tracks reales incluidos durante la fase del motor de audio.
+    static let demoLibrary: [Song] = [
+        Song(
+            title: "Rendezvous",
+            artist: "Harmonia Sessions",
+            album: "Harmonia Demo",
+            duration: 123,
+            artworkSymbol: "waveform.path.ecg",
+            audioResource: "track-1"
+        ),
+        Song(
+            title: "Horizons",
+            artist: "Harmonia Sessions",
+            album: "Harmonia Demo",
+            duration: 90,
+            artworkSymbol: "sun.horizon.fill",
+            audioResource: "track-2"
+        )
     ]
+
+    /// Kept as an alias so existing previews/components remain simple.
+    /// Se conserva como alias para mantener simples los previews/componentes existentes.
+    static let mockLibrary = demoLibrary
 }
 
+extension TimeInterval {
+    /// Formats seconds as m:ss for playback UI.
+    /// Formatea segundos como m:ss para la interfaz de reproducción.
+    var formattedPlaybackTime: String {
+        guard isFinite, self >= 0 else { return "0:00" }
+        let totalSeconds = Int(self.rounded(.down))
+        return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
+    }
+}

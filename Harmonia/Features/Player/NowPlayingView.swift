@@ -1,21 +1,12 @@
-//
-//  NowPlayingView.swift
-//  Harmonia
-//
-//  Created by Antonio Alvarez on 07/10/26.
-//
-
-
-
-
 import SwiftUI
 
-/// Full-screen visual prototype for the future audio player.
-/// Prototipo visual de pantalla completa para el futuro reproductor de audio.
+/// Full-screen player connected to Harmonia's real audio engine.
+/// Reproductor de pantalla completa conectado al motor de audio real de Harmonia.
 struct NowPlayingView: View {
-    let song: Song
-    @Binding var isPlaying: Bool
+    let player: PlayerViewModel
     @Environment(\.dismiss) private var dismiss
+    @State private var isSeeking = false
+    @State private var seekPosition: TimeInterval = 0
 
     var body: some View {
         ZStack {
@@ -31,25 +22,16 @@ struct NowPlayingView: View {
                 header
                 Spacer(minLength: 28)
 
-                ArtworkView(song: song, size: 310)
+                ArtworkView(song: player.currentSong, size: 310)
                     .shadow(color: .purple.opacity(0.28), radius: 38, y: 22)
 
                 Spacer(minLength: 34)
-                metadata
-                    .padding(.horizontal, 30)
-
-                progress
-                    .padding(.horizontal, 30)
-                    .padding(.top, 28)
-
-                playbackControls
-                    .padding(.horizontal, 34)
-                    .padding(.top, 28)
+                metadata.padding(.horizontal, 30)
+                progress.padding(.horizontal, 30).padding(.top, 28)
+                playbackControls.padding(.horizontal, 34).padding(.top, 28)
 
                 Spacer(minLength: 24)
-                bottomActions
-                    .padding(.horizontal, 42)
-                    .padding(.bottom, 24)
+                bottomActions.padding(.horizontal, 42).padding(.bottom, 24)
             }
         }
         .preferredColorScheme(.dark)
@@ -71,7 +53,7 @@ struct NowPlayingView: View {
                     .font(.caption2.weight(.bold))
                     .tracking(1.4)
                     .foregroundStyle(.secondary)
-                Text(song.album)
+                Text(player.currentSong.album)
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
             }
@@ -92,32 +74,36 @@ struct NowPlayingView: View {
     private var metadata: some View {
         HStack {
             VStack(alignment: .leading, spacing: 6) {
-                Text(song.title)
-                    .font(.title2.weight(.bold))
-                Text(song.artist)
+                Text(player.currentSong.title).font(.title2.weight(.bold))
+                Text(player.currentSong.artist)
                     .font(.body.weight(.medium))
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Image(systemName: "heart")
-                .font(.title3)
+            Image(systemName: "heart").font(.title3)
         }
     }
 
     private var progress: some View {
-        VStack(spacing: 8) {
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.white.opacity(0.16))
-                    Capsule().fill(.white).frame(width: geometry.size.width * 0.38)
+        VStack(spacing: 6) {
+            Slider(
+                value: Binding(
+                    get: { isSeeking ? seekPosition : player.currentTime },
+                    set: { seekPosition = $0 }
+                ),
+                in: 0...max(player.duration, 1),
+                onEditingChanged: { editing in
+                    isSeeking = editing
+                    if !editing { player.seek(to: seekPosition) }
+                    else { seekPosition = player.currentTime }
                 }
-            }
-            .frame(height: 4)
+            )
+            .tint(.white)
 
             HStack {
-                Text("1:32")
+                Text((isSeeking ? seekPosition : player.currentTime).formattedPlaybackTime)
                 Spacer()
-                Text("-\(song.formattedDuration)")
+                Text("-\(max(player.duration - (isSeeking ? seekPosition : player.currentTime), 0).formattedPlaybackTime)")
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
@@ -128,10 +114,10 @@ struct NowPlayingView: View {
         HStack {
             Button(action: {}) { Image(systemName: "shuffle") }
             Spacer()
-            Button(action: {}) { Image(systemName: "backward.fill").font(.title) }
+            Button { player.playPrevious() } label: { Image(systemName: "backward.fill").font(.title) }
             Spacer()
-            Button { isPlaying.toggle() } label: {
-                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+            Button { player.togglePlayback() } label: {
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 28, weight: .bold))
                     .contentTransition(.symbolEffect(.replace))
                     .frame(width: 74, height: 74)
@@ -139,7 +125,7 @@ struct NowPlayingView: View {
                     .foregroundStyle(.black)
             }
             Spacer()
-            Button(action: {}) { Image(systemName: "forward.fill").font(.title) }
+            Button { player.playNext() } label: { Image(systemName: "forward.fill").font(.title) }
             Spacer()
             Button(action: {}) { Image(systemName: "repeat") }
         }
@@ -160,3 +146,6 @@ struct NowPlayingView: View {
     }
 }
 
+#Preview {
+    NowPlayingView(player: PlayerViewModel())
+}
