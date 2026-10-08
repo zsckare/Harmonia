@@ -106,37 +106,6 @@ struct Song: Identifiable, Hashable, Codable, Sendable {
     }
 }
 
-// MARK: - Demo Library
-
-extension Song {
-    static let demoLibrary: [Song] = [
-        Song(
-            title: "Rendezvous",
-            artist: "Harmonia Sessions",
-            album: "Harmonia Demo",
-            duration: 123,
-            artworkSymbol: "waveform.path.ecg",
-            source: .bundle(
-                resource: "track-1",
-                ext: "mp3"
-            )
-        ),
-        Song(
-            title: "Horizons",
-            artist: "Harmonia Sessions",
-            album: "Harmonia Demo",
-            duration: 90,
-            artworkSymbol: "sun.horizon.fill",
-            source: .bundle(
-                resource: "track-2",
-                ext: "mp3"
-            )
-        )
-    ]
-
-    static let mockLibrary = demoLibrary
-}
-
 // MARK: - Playback Time Formatting
 
 extension TimeInterval {

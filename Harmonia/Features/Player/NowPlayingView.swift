@@ -16,6 +16,16 @@ struct NowPlayingView: View {
   /// Biblioteca musical utilizada para favoritos y otras acciones.
   let library: MusicLibraryStore
 
+
+  /// The full player is only presented while a song is selected.
+  /// El reproductor completo solo se presenta cuando existe una canción seleccionada.
+  private var currentSong: Song {
+    guard let song = player.currentSong else {
+      preconditionFailure("NowPlayingView requires a selected song.")
+    }
+    return song
+  }
+
   // MARK: - Environment
 
   /// Allows this view to dismiss itself.
@@ -52,7 +62,7 @@ struct NowPlayingView: View {
 
       // Dynamic atmospheric color generated from the current song.
       // Color atmosférico dinámico generado a partir de la canción.
-      HarmoniaTheme.gradient(for: player.currentSong)
+      HarmoniaTheme.gradient(for: currentSong)
         .opacity(0.35)
         .blur(radius: 90)
         .ignoresSafeArea()
@@ -63,7 +73,7 @@ struct NowPlayingView: View {
         Spacer()
 
         ArtworkView(
-          song: player.currentSong,
+          song: currentSong,
           size: 310
         )
         .shadow(
@@ -121,7 +131,7 @@ struct NowPlayingView: View {
           .font(.caption2.bold())
           .tracking(1.4)
 
-        Text(player.currentSong.album)
+        Text(currentSong.album)
           .font(.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
@@ -148,11 +158,11 @@ struct NowPlayingView: View {
         alignment: .leading,
         spacing: 5
       ) {
-        Text(player.currentSong.title)
+        Text(currentSong.title)
           .font(.title2.bold())
           .lineLimit(1)
 
-        Text(player.currentSong.artist)
+        Text(currentSong.artist)
           .foregroundStyle(.secondary)
           .lineLimit(1)
       }
@@ -160,10 +170,10 @@ struct NowPlayingView: View {
       Spacer()
 
       Button {
-        library.toggleFavorite(player.currentSong)
+        library.toggleFavorite(currentSong)
       } label: {
         Image(
-          systemName: library.isFavorite(player.currentSong)
+          systemName: library.isFavorite(currentSong)
             ? "heart.fill"
             : "heart"
         )

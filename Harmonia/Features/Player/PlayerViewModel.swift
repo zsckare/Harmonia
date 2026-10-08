@@ -29,7 +29,7 @@ final class PlayerViewModel {
 
     /// Song currently selected by the player.
     /// Canción seleccionada actualmente.
-    private(set) var currentSong: Song
+    private(set) var currentSong: Song?
 
     /// Indicates whether audio is currently playing.
     /// Indica si actualmente se está reproduciendo audio.
@@ -117,18 +117,13 @@ final class PlayerViewModel {
     // MARK: - Initialization
 
     init(
-        songs: [Song] = Song.demoLibrary,
+        songs: [Song] = [],
         audioPlayer: AudioPlayerService? = nil,
         audioSession: AudioSessionService? = nil
     ) {
-        precondition(
-            !songs.isEmpty,
-            "PlayerViewModel requires at least one song."
-        )
-
         self.queue = songs
         self.playbackQueue = songs
-        self.currentSong = songs[0]
+        self.currentSong = songs.first
 
         self.audioPlayer = audioPlayer ?? AudioPlayerService()
         self.audioSession = audioSession ?? .shared
@@ -142,28 +137,30 @@ final class PlayerViewModel {
     ///
     /// Reemplaza las canciones disponibles para el reproductor.
     func replaceLibrary(_ songs: [Song]) {
-        guard !songs.isEmpty else {
-            return
-        }
-
         queue = songs
 
-        // If the current song still exists, preserve it.
-        // Si la canción actual todavía existe, la conservamos.
-        if songs.contains(currentSong) {
-            rebuildPlaybackQueue(
-                keeping: currentSong
-            )
+        guard !songs.isEmpty else {
+            playbackTask?.cancel()
+            playbackTask = nil
+            playbackRequestID = UUID()
+            audioPlayer.pause()
+            stopProgressUpdates()
+            currentSong = nil
+            playbackQueue = []
+            currentTime = 0
+            duration = 0
+            isPlaying = false
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             return
         }
 
-        // Otherwise select the first available song.
-        // De lo contrario seleccionamos la primera canción disponible.
-        currentSong = songs[0]
+        if let currentSong, songs.contains(currentSong) {
+            rebuildPlaybackQueue(keeping: currentSong)
+            return
+        }
 
-        rebuildPlaybackQueue(
-            keeping: currentSong
-        )
+        currentSong = songs[0]
+        rebuildPlaybackQueue(keeping: songs[0])
     }
 
     // MARK: - Playback
@@ -229,6 +226,7 @@ final class PlayerViewModel {
     func playNext() {
         guard
             !playbackQueue.isEmpty,
+            let currentSong,
             let currentIndex = playbackQueue.firstIndex(of: currentSong)
         else {
             return
@@ -282,6 +280,7 @@ final class PlayerViewModel {
 
         guard
             !playbackQueue.isEmpty,
+            let currentSong,
             let currentIndex = playbackQueue.firstIndex(of: currentSong)
         else {
             return
@@ -311,9 +310,11 @@ final class PlayerViewModel {
     func toggleShuffle() {
         isShuffleEnabled.toggle()
 
-        rebuildPlaybackQueue(
-            keeping: currentSong
-        )
+        if let currentSong {
+            rebuildPlaybackQueue(keeping: currentSong)
+        } else {
+            playbackQueue = isShuffleEnabled ? queue.shuffled() : queue
+        }
     }
 
     /// Rebuilds the effective playback queue.
@@ -371,6 +372,7 @@ final class PlayerViewModel {
     /// Canciones que se reproducirán después de la actual.
     var upNext: [Song] {
         guard
+            let currentSong,
             let currentIndex = playbackQueue.firstIndex(of: currentSong)
         else {
             return []
@@ -491,6 +493,10 @@ final class PlayerViewModel {
     ///
     /// Reanuda la canción cargada o carga la canción actual si es necesario.
     private func resumeOrLoad() {
+        guard let currentSong else {
+            return
+        }
+
         if audioPlayer.duration == 0 {
             play(currentSong)
             return
@@ -558,29 +564,21 @@ final class PlayerViewModel {
     /// Actualiza los metadatos mostrados por iOS en Lock Screen
     /// y Control Center.
     private func updateNowPlaying() {
+        guard let currentSong else {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            return
+        }
+
         let info: [String: Any] = [
-            MPMediaItemPropertyTitle:
-                currentSong.title,
-
-            MPMediaItemPropertyArtist:
-                currentSong.artist,
-
-            MPMediaItemPropertyAlbumTitle:
-                currentSong.album,
-
-            MPMediaItemPropertyPlaybackDuration:
-                duration,
-
-            MPNowPlayingInfoPropertyElapsedPlaybackTime:
-                currentTime,
-
-            MPNowPlayingInfoPropertyPlaybackRate:
-                isPlaying ? 1.0 : 0.0
+            MPMediaItemPropertyTitle: currentSong.title,
+            MPMediaItemPropertyArtist: currentSong.artist,
+            MPMediaItemPropertyAlbumTitle: currentSong.album,
+            MPMediaItemPropertyPlaybackDuration: duration,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
         ]
 
-        MPNowPlayingInfoCenter
-            .default()
-            .nowPlayingInfo = info
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
     // MARK: - Remote Commands

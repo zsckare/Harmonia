@@ -26,23 +26,27 @@ struct LibraryView: View {
             ) {
                 header
 
-                if !library.recentlyPlayed.isEmpty {
+                if library.songs.isEmpty {
+                    emptyLibraryState
+                } else {
+                    if !library.recentlyPlayed.isEmpty {
+                        horizontalSection(
+                            title: "Recently Played",
+                            songs: library.recentlyPlayed
+                        )
+                    }
+
                     horizontalSection(
-                        title: "Recently Played",
-                        songs: library.recentlyPlayed
+                        title: "Recently Added",
+                        songs: Array(
+                            library.songs
+                                .sorted { $0.dateAdded > $1.dateAdded }
+                                .prefix(8)
+                        )
                     )
+
+                    songsSection
                 }
-
-                horizontalSection(
-                    title: "Recently Added",
-                    songs: Array(
-                        library.songs
-                            .sorted { $0.dateAdded > $1.dateAdded }
-                            .prefix(8)
-                    )
-                )
-
-                songsSection
             }
             .padding(
                 .horizontal,
@@ -140,6 +144,48 @@ struct LibraryView: View {
                 library.errorMessage ?? ""
             )
         }
+    }
+
+    // MARK: - Empty Library
+
+    /// First-run state shown before the user imports music.
+    /// Estado inicial mostrado antes de que el usuario importe música.
+    private var emptyLibraryState: some View {
+        VStack(spacing: 18) {
+            Spacer(minLength: 56)
+
+            Image(systemName: "music.note.house.fill")
+                .font(.system(size: 54, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 8) {
+                Text("No Music Yet")
+                    .font(.title2.bold())
+
+                Text("Import audio files or an entire folder to start building your Harmonia library.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 330)
+            }
+
+            Button {
+                isShowingImportMenu = true
+            } label: {
+                Label("Import Music", systemImage: "square.and.arrow.down")
+                    .font(.headline)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 12)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.white)
+            .foregroundStyle(.black)
+            .disabled(library.isImporting)
+
+            Spacer(minLength: 56)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Import Progress
@@ -320,7 +366,7 @@ struct LibraryView: View {
             ForEach(library.songs) { song in
                 SongRow(
                     song: song,
-                    isCurrentSong: song.id == player.currentSong.id
+                    isCurrentSong: song.id == player.currentSong?.id
                 ) {
                     player.play(song)
                 }

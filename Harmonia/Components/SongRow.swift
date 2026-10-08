@@ -111,7 +111,13 @@ struct SongRow: View {
       .ignoresSafeArea()
 
     SongRow(
-      song: Song.demoLibrary[0],
+      song: Song(
+        title: "Preview Song",
+        artist: "Preview Artist",
+        album: "Preview Album",
+        duration: 180,
+        source: .libraryFile(filename: "preview.mp3")
+      ),
       isCurrentSong: true,
       onSelect: {}
     )

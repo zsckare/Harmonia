@@ -27,7 +27,7 @@ final class MusicLibraryStore {
     // MARK: - Derived Collections
 
     var songs: [Song] {
-        Song.demoLibrary + importedSongs
+        importedSongs
     }
 
     var favorites: [Song] {

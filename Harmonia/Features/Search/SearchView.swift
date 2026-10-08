@@ -11,7 +11,7 @@ struct SearchView: View {
     }
   }
   var body: some View {
-    List(results) { s in SongRow(song: s, isCurrentSong: s == player.currentSong) { player.play(s) }
+    List(results) { s in SongRow(song: s, isCurrentSong: s.id == player.currentSong?.id) { player.play(s) }
     }.scrollContentBackground(.hidden).background(HarmoniaTheme.background).navigationTitle(
       "Search"
     ).searchable(text: $query, prompt: "Songs, artists and albums").overlay {

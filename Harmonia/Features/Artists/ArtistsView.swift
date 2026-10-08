@@ -30,7 +30,7 @@ struct ArtistDetailView: View {
       VStack(alignment: .leading, spacing: 16) {
         Text(artist.name).font(.largeTitle.bold())
         ForEach(artist.songs) { s in
-          SongRow(song: s, isCurrentSong: s == player.currentSong) { player.play(s) }
+          SongRow(song: s, isCurrentSong: s.id == player.currentSong?.id) { player.play(s) }
         }
       }.padding(20)
     }.background(HarmoniaTheme.background.ignoresSafeArea())

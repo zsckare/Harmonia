@@ -43,7 +43,7 @@ struct FavoritesView: View {
   let player: PlayerViewModel
   var body: some View {
     List(library.favorites) { s in
-      SongRow(song: s, isCurrentSong: s == player.currentSong) { player.play(s) }
+      SongRow(song: s, isCurrentSong: s.id == player.currentSong?.id) { player.play(s) }
     }.scrollContentBackground(.hidden).background(HarmoniaTheme.background).navigationTitle(
       "Favorites")
   }
@@ -54,7 +54,7 @@ struct PlaylistDetailView: View {
   let player: PlayerViewModel
   var body: some View {
     List(library.songs(in: playlist)) { s in
-      SongRow(song: s, isCurrentSong: s == player.currentSong) { player.play(s) }
+      SongRow(song: s, isCurrentSong: s.id == player.currentSong?.id) { player.play(s) }
     }.scrollContentBackground(.hidden).background(HarmoniaTheme.background).navigationTitle(
       playlist.name)
   }

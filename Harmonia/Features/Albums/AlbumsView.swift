@@ -42,7 +42,7 @@ struct AlbumDetailView: View {
         }
         VStack {
           ForEach(album.songs) { s in
-            SongRow(song: s, isCurrentSong: s == player.currentSong) { player.play(s) }
+            SongRow(song: s, isCurrentSong: s.id == player.currentSong?.id) { player.play(s) }
           }
         }
       }.padding(20)
