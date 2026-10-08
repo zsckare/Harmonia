@@ -19,6 +19,9 @@ struct ContentView: View {
       Tab("Playlists", systemImage: "music.note.list") {
         NavigationStack { PlaylistsView(library: library, player: player) }
       }
+      Tab("Settings", systemImage: "gearshape.fill") {
+        NavigationStack { SettingsView(player: player, library: library) }
+      }
       Tab("Search", systemImage: "magnifyingglass", role: .search) {
         NavigationStack { SearchView(library: library, player: player) }
       }

@@ -6,6 +6,9 @@ import SwiftUI
 /// la canción que se está reproduciendo actualmente.
 struct NowPlayingView: View {
 
+  @AppStorage("harmonia.appearance.dynamicArtworkColors") private var dynamicArtworkColors = true
+  @AppStorage("harmonia.appearance.visualizer") private var visualizerEnabled = true
+
   // MARK: - Dependencies
 
   /// Central playback state.
@@ -67,10 +70,12 @@ struct NowPlayingView: View {
 
       // Dynamic atmospheric color generated from the current song.
       // Color atmosférico dinámico generado a partir de la canción.
-      HarmoniaTheme.gradient(for: currentSong)
-        .opacity(0.35)
-        .blur(radius: 90)
-        .ignoresSafeArea()
+      if dynamicArtworkColors {
+        HarmoniaTheme.gradient(for: currentSong)
+          .opacity(0.35)
+          .blur(radius: 90)
+          .ignoresSafeArea()
+      }
 
       VStack {
         header
@@ -92,7 +97,9 @@ struct NowPlayingView: View {
 
         progress
 
-        AudioLevelView(level: player.audioLevel)
+        if visualizerEnabled {
+          AudioLevelView(level: player.audioLevel)
+        }
 
         controls
 
