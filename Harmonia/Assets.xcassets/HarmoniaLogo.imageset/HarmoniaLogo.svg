@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Harmonia App Icon</title>
+  <desc id="desc">Dark indigo Harmonia icon with luminous cyan, blue, violet, pink and coral sound waves surrounding a musical note.</desc>
+  <defs>
+    <linearGradient id="bg" x1="90" y1="90" x2="930" y2="940" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#061A38"/>
+      <stop offset="0.45" stop-color="#07153A"/>
+      <stop offset="0.72" stop-color="#24113E"/>
+      <stop offset="1" stop-color="#401326"/>
+    </linearGradient>
+    <radialGradient id="blueGlow" cx="0" cy="0" r="1" gradientTransform="translate(185 180) rotate(35) scale(650)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#007AFF" stop-opacity=".38"/>
+      <stop offset="1" stop-color="#007AFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="pinkGlow" cx="0" cy="0" r="1" gradientTransform="translate(865 720) rotate(-130) scale(560)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF2D8E" stop-opacity=".26"/>
+      <stop offset="1" stop-color="#FF2D8E" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="wave1" x1="60" y1="430" x2="970" y2="690" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#12D8FF"/>
+      <stop offset=".28" stop-color="#078DFF"/>
+      <stop offset=".55" stop-color="#3348FF"/>
+      <stop offset=".77" stop-color="#A83EFF"/>
+      <stop offset="1" stop-color="#FF8A70"/>
+    </linearGradient>
+    <linearGradient id="wave2" x1="80" y1="700" x2="980" y2="540" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#006BFF"/>
+      <stop offset=".42" stop-color="#2637E8"/>
+      <stop offset=".7" stop-color="#8139F2"/>
+      <stop offset="1" stop-color="#FF5E96"/>
+    </linearGradient>
+    <linearGradient id="note" x1="390" y1="790" x2="760" y2="190" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#30D8FF"/>
+      <stop offset=".27" stop-color="#315CFF"/>
+      <stop offset=".55" stop-color="#7548FF"/>
+      <stop offset=".78" stop-color="#E94BFF"/>
+      <stop offset="1" stop-color="#FFF0FF"/>
+    </linearGradient>
+    <linearGradient id="flag" x1="580" y1="210" x2="790" y2="525" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF4FF"/>
+      <stop offset=".18" stop-color="#A4B5FF"/>
+      <stop offset=".47" stop-color="#5851FF"/>
+      <stop offset=".76" stop-color="#D443F7"/>
+      <stop offset="1" stop-color="#FF76E6"/>
+    </linearGradient>
+    <radialGradient id="head" cx="0" cy="0" r="1" gradientTransform="translate(455 695) rotate(36) scale(230 205)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#75E9FF"/>
+      <stop offset=".38" stop-color="#3B70FF"/>
+      <stop offset=".72" stop-color="#7045F4"/>
+      <stop offset="1" stop-color="#FF9AD7"/>
+    </radialGradient>
+    <filter id="softGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="16" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="subtleGlow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="iconClip">
+      <rect x="44" y="44" width="936" height="936" rx="210"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#iconClip)">
+    <rect x="44" y="44" width="936" height="936" rx="210" fill="url(#bg)"/>
+    <rect x="44" y="44" width="936" height="936" rx="210" fill="url(#blueGlow)"/>
+    <rect x="44" y="44" width="936" height="936" rx="210" fill="url(#pinkGlow)"/>
+
+    <!-- Rear sound wave -->
+    <path d="M15 604 C120 545 168 505 251 521 C347 540 380 661 482 666 C592 672 617 536 722 523 C826 510 875 612 1014 584 L1014 683 C884 712 819 606 731 617 C630 630 607 760 493 754 C371 748 338 625 246 613 C165 603 108 652 15 700 Z" fill="url(#wave2)" opacity=".86"/>
+
+    <!-- Front sound wave -->
+    <path d="M5 545 C107 534 161 403 273 404 C377 405 411 574 523 579 C633 584 674 461 779 460 C877 459 907 570 1019 532 L1019 619 C911 665 865 552 782 553 C688 555 644 676 528 670 C404 663 373 499 274 496 C177 494 118 613 5 634 Z" fill="url(#wave1)" opacity=".92"/>
+
+    <!-- Note stem -->
+    <path d="M568 219 C568 202 578 190 591 190 C605 190 616 202 616 219 L616 674 C616 701 602 729 579 747 L545 703 C560 692 568 676 568 657 Z" fill="url(#note)" filter="url(#subtleGlow)"/>
+
+    <!-- Note flag / ribbon -->
+    <path d="M592 190 C612 242 649 274 703 305 C763 340 817 368 837 421 C853 464 844 511 824 552 C824 485 792 451 742 425 C693 400 637 380 610 335 C590 301 584 247 592 190 Z" fill="url(#flag)" filter="url(#softGlow)"/>
+    <path d="M603 206 C616 256 653 292 706 322 C759 352 799 380 817 419" fill="none" stroke="#FFFFFF" stroke-opacity=".34" stroke-width="7" stroke-linecap="round"/>
+
+    <!-- Note head -->
+    <ellipse cx="474" cy="746" rx="125" ry="105" transform="rotate(-28 474 746)" fill="url(#head)" filter="url(#softGlow)"/>
+    <ellipse cx="450" cy="716" rx="58" ry="33" transform="rotate(-28 450 716)" fill="#FFFFFF" opacity=".12"/>
+
+    <!-- Edge lighting -->
+    <rect x="47" y="47" width="930" height="930" rx="207" fill="none" stroke="url(#wave1)" stroke-width="3" opacity=".7"/>
+  </g>
+</svg>
