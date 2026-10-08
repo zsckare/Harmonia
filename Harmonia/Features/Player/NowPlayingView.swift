@@ -36,6 +36,11 @@ struct NowPlayingView: View {
   @Environment(\.dismiss)
   private var dismiss
 
+  /// Honors the system Reduce Motion accessibility preference.
+  /// Respeta la preferencia de accesibilidad Reduce Motion del sistema.
+  @Environment(\.accessibilityReduceMotion)
+  private var reduceMotion
+
   // MARK: - Local State
 
   /// Indicates whether the user is currently dragging the progress slider.
@@ -57,6 +62,18 @@ struct NowPlayingView: View {
   /// Controla la presentación de ajustes avanzados de reproducción.
   @State
   private var isShowingPlaybackSettings = false
+
+  /// Horizontal translation applied to the artwork while navigating tracks.
+  /// Traslación horizontal aplicada al artwork al navegar entre canciones.
+  @State private var artworkDragOffset: CGFloat = 0
+
+  /// Vertical translation applied to the complete player during dismissal.
+  /// Traslación vertical aplicada al reproductor completo durante el cierre.
+  @State private var dismissDragOffset: CGFloat = 0
+
+  /// Prevents multiple dismiss completions while the exit animation runs.
+  /// Evita múltiples cierres mientras se ejecuta la animación de salida.
+  @State private var isDismissingInteractively = false
 
   // MARK: - Body
 
@@ -82,14 +99,7 @@ struct NowPlayingView: View {
 
         Spacer()
 
-        ArtworkView(
-          song: currentSong,
-          size: 310
-        )
-        .shadow(
-          radius: 35,
-          y: 20
-        )
+        artworkPager
 
         Spacer()
 
@@ -109,6 +119,10 @@ struct NowPlayingView: View {
       }
       .padding(.horizontal, 24)
     }
+    .offset(y: max(dismissDragOffset, 0))
+    .scaleEffect(dismissScale)
+    .opacity(dismissOpacity)
+    .simultaneousGesture(dismissGesture)
     .sheet(isPresented: $isShowingQueue) {
       QueueView(player: player)
         .presentationDetents([.medium, .large])
@@ -118,6 +132,172 @@ struct NowPlayingView: View {
         .presentationDetents([.medium, .large])
     }
     .preferredColorScheme(.dark)
+  }
+
+  // MARK: - Interactive Gestures
+
+  /// Artwork surface used as a horizontal track pager.
+  /// Superficie del artwork utilizada como paginador horizontal de canciones.
+  private var artworkPager: some View {
+    GeometryReader { proxy in
+      let width = max(proxy.size.width, 1)
+
+      ArtworkView(
+        song: currentSong,
+        size: min(310, width)
+      )
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .offset(x: artworkDragOffset)
+      .rotationEffect(.degrees(Double(artworkDragOffset / width) * 2.5))
+      .scaleEffect(1 - min(abs(artworkDragOffset) / width, 1) * 0.035)
+      .opacity(1 - min(abs(artworkDragOffset) / width, 1) * 0.16)
+      .shadow(radius: 35, y: 20)
+      .contentShape(Rectangle())
+      .gesture(trackSwipeGesture(containerWidth: width))
+      .accessibilityHint("Swipe left for next song or right for previous song")
+    }
+    .frame(height: 310)
+  }
+
+  /// Horizontal gesture dedicated to changing songs from the artwork.
+  /// Gesto horizontal dedicado a cambiar canciones desde el artwork.
+  private func trackSwipeGesture(containerWidth: CGFloat) -> some Gesture {
+    DragGesture(minimumDistance: 12, coordinateSpace: .local)
+      .onChanged { value in
+        guard abs(value.translation.width) > abs(value.translation.height) else {
+          return
+        }
+
+        artworkDragOffset = value.translation.width
+      }
+      .onEnded { value in
+        let horizontal = value.translation.width
+        let vertical = value.translation.height
+
+        guard abs(horizontal) > abs(vertical) else {
+          resetArtworkPosition()
+          return
+        }
+
+        let projected = value.predictedEndTranslation.width
+        let threshold = max(containerWidth * 0.24, 72)
+        let shouldChangeTrack =
+          abs(horizontal) >= threshold || abs(projected) >= threshold * 1.35
+
+        guard shouldChangeTrack else {
+          resetArtworkPosition()
+          return
+        }
+
+        let direction: CGFloat = horizontal < 0 ? -1 : 1
+        HapticService.impact()
+
+        if reduceMotion {
+          artworkDragOffset = 0
+          navigateTrack(direction: direction)
+          return
+        }
+
+        withAnimation(.easeIn(duration: 0.16)) {
+          artworkDragOffset = direction * containerWidth * 1.15
+        }
+
+        Task { @MainActor in
+          try? await Task.sleep(for: .milliseconds(165))
+          navigateTrack(direction: direction)
+          artworkDragOffset = -direction * containerWidth * 0.28
+
+          withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) {
+            artworkDragOffset = 0
+          }
+        }
+      }
+  }
+
+  /// Vertical gesture used to interactively dismiss Now Playing.
+  /// Gesto vertical utilizado para cerrar Now Playing de forma interactiva.
+  private var dismissGesture: some Gesture {
+    DragGesture(minimumDistance: 16, coordinateSpace: .global)
+      .onChanged { value in
+        guard !isSeeking, !isDismissingInteractively else { return }
+
+        let horizontal = abs(value.translation.width)
+        let vertical = value.translation.height
+
+        guard vertical > 0, vertical > horizontal * 1.15 else {
+          return
+        }
+
+        dismissDragOffset = vertical
+      }
+      .onEnded { value in
+        guard dismissDragOffset > 0, !isDismissingInteractively else {
+          return
+        }
+
+        let projected = max(value.predictedEndTranslation.height, 0)
+        let shouldDismiss = dismissDragOffset > 150 || projected > 260
+
+        if shouldDismiss {
+          completeInteractiveDismiss()
+        } else {
+          withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
+            dismissDragOffset = 0
+          }
+        }
+      }
+  }
+
+  /// Scale applied while dragging the player downward.
+  /// Escala aplicada mientras el reproductor se arrastra hacia abajo.
+  private var dismissScale: CGFloat {
+    guard !reduceMotion else { return 1 }
+    return 1 - min(max(dismissDragOffset, 0) / 1_800, 0.055)
+  }
+
+  /// Opacity applied while dragging the player downward.
+  /// Opacidad aplicada mientras el reproductor se arrastra hacia abajo.
+  private var dismissOpacity: Double {
+    1 - min(Double(max(dismissDragOffset, 0) / 900), 0.22)
+  }
+
+  /// Returns artwork to its resting position after a cancelled swipe.
+  /// Devuelve el artwork a su posición inicial después de cancelar un swipe.
+  private func resetArtworkPosition() {
+    withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) {
+      artworkDragOffset = 0
+    }
+  }
+
+  /// Executes the requested queue navigation direction.
+  /// Ejecuta la dirección solicitada dentro de la cola.
+  private func navigateTrack(direction: CGFloat) {
+    if direction < 0 {
+      player.playNext()
+    } else {
+      player.playPreviousTrack()
+    }
+  }
+
+  /// Finishes the downward transition and dismisses the full-screen cover.
+  /// Finaliza la transición hacia abajo y cierra el full-screen cover.
+  private func completeInteractiveDismiss() {
+    isDismissingInteractively = true
+    HapticService.impact()
+
+    if reduceMotion {
+      dismiss()
+      return
+    }
+
+    withAnimation(.easeIn(duration: 0.20)) {
+      dismissDragOffset = 760
+    }
+
+    Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(205))
+      dismiss()
+    }
   }
 
   // MARK: - Header

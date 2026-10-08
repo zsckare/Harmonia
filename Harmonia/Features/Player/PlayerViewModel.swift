@@ -482,6 +482,41 @@ final class PlayerViewModel {
         seek(to: 0)
     }
 
+    /// Plays the previous item in the queue without applying the
+    /// "restart after three seconds" behavior used by the Previous button.
+    ///
+    /// This is used by direct navigation gestures where a right swipe means
+    /// explicitly moving to the previous song.
+    ///
+    /// Reproduce el elemento anterior de la cola sin aplicar el comportamiento
+    /// de "reiniciar después de tres segundos" utilizado por el botón Previous.
+    ///
+    /// Se utiliza en gestos de navegación directa, donde deslizar a la derecha
+    /// significa explícitamente cambiar a la canción anterior.
+    func playPreviousTrack() {
+        guard
+            !playbackQueue.isEmpty,
+            let currentSong,
+            let currentIndex = playbackQueue.firstIndex(of: currentSong)
+        else {
+            return
+        }
+
+        if currentIndex > 0 {
+            play(playbackQueue[currentIndex - 1])
+            return
+        }
+
+        if repeatMode == .all, let lastSong = playbackQueue.last {
+            play(lastSong)
+            return
+        }
+
+        // There is no previous item when Repeat All is disabled.
+        // No existe una canción anterior cuando Repeat All está desactivado.
+        seek(to: 0)
+    }
+
     // MARK: - Shuffle
 
     /// Enables or disables shuffled playback.
