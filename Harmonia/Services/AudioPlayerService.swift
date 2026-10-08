@@ -27,6 +27,8 @@ final class AudioPlayerService: @unchecked Sendable {
 
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
+    private let timePitch = AVAudioUnitTimePitch()
+    private let equalizer = AVAudioUnitEQ(numberOfBands: 3)
 
     /// File currently represented by the player state.
     /// Archivo representado actualmente por el estado del reproductor.
@@ -61,11 +63,12 @@ final class AudioPlayerService: @unchecked Sendable {
 
     init() {
         engine.attach(playerNode)
-        engine.connect(
-            playerNode,
-            to: engine.mainMixerNode,
-            format: nil
-        )
+        engine.attach(timePitch)
+        engine.attach(equalizer)
+        engine.connect(playerNode, to: timePitch, format: nil)
+        engine.connect(timePitch, to: equalizer, format: nil)
+        engine.connect(equalizer, to: engine.mainMixerNode, format: nil)
+        configureEqualizerLocked(.flat)
     }
 
     // MARK: - Observable Playback Values
@@ -98,6 +101,36 @@ final class AudioPlayerService: @unchecked Sendable {
             audioQueue.sync {
                 storedVolume = min(max(newValue, 0), 1)
                 playerNode.volume = storedVolume
+            }
+        }
+    }
+
+
+    /// Playback rate using AVAudioUnitTimePitch. / Velocidad mediante AVAudioUnitTimePitch.
+    var playbackRate: Float {
+        get { audioQueue.sync { timePitch.rate } }
+        set { audioQueue.sync { timePitch.rate = min(max(newValue, 0.5), 2.0) } }
+    }
+
+    /// Applies an EQ preset in the real audio graph. / Aplica un preset de EQ en el grafo real.
+    func setEqualizerPreset(_ preset: EqualizerPreset) {
+        audioQueue.sync { configureEqualizerLocked(preset) }
+    }
+
+    /// Installs a lightweight level meter tap used by SwiftUI visualization.
+    /// Instala un tap ligero para medir nivel y alimentar la visualización SwiftUI.
+    func installLevelMeter(_ handler: @escaping @Sendable (Float) -> Void) {
+        audioQueue.async { [weak self] in
+            guard let self else { return }
+            let mixer = self.engine.mainMixerNode
+            mixer.removeTap(onBus: 0)
+            mixer.installTap(onBus: 0, bufferSize: 1024, format: nil) { buffer, _ in
+                guard let data = buffer.floatChannelData?[0] else { return }
+                let count = Int(buffer.frameLength)
+                guard count > 0 else { return }
+                var sum: Float = 0
+                for index in 0..<count { sum += data[index] * data[index] }
+                handler(min(sqrt(sum / Float(count)) * 5, 1))
             }
         }
     }
@@ -349,6 +382,26 @@ final class AudioPlayerService: @unchecked Sendable {
         }
 
         handler?(nextSong)
+    }
+
+    private func configureEqualizerLocked(_ preset: EqualizerPreset) {
+        let bands = equalizer.bands
+        let values: [(Float, Float)]
+        switch preset {
+        case .flat: values = [(80, 0), (1000, 0), (8000, 0)]
+        case .bassBoost: values = [(80, 7), (1000, 1), (8000, 0)]
+        case .trebleBoost: values = [(80, 0), (1000, 1), (8000, 7)]
+        case .vocal: values = [(80, -2), (1200, 5), (8000, 2)]
+        case .rock: values = [(80, 5), (1000, -1), (8000, 4)]
+        case .electronic: values = [(80, 6), (1000, 0), (8000, 5)]
+        }
+        for (band, value) in zip(bands, values) {
+            band.filterType = .parametric
+            band.frequency = value.0
+            band.bandwidth = 1
+            band.gain = value.1
+            band.bypass = false
+        }
     }
 
     // MARK: - Time Helpers

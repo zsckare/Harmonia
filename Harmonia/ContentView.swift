@@ -4,6 +4,7 @@ struct ContentView: View {
   @State private var player = PlayerViewModel()
   @State private var library = MusicLibraryStore()
   @State private var showPlayer = false
+  @AppStorage("harmonia.hasCompletedOnboarding") private var hasCompletedOnboarding = false
   var body: some View {
     TabView {
       Tab("Library", systemImage: "music.note.house") {
@@ -24,7 +25,14 @@ struct ContentView: View {
     }.tabViewBottomAccessory { MiniPlayerView(player: player, onOpenPlayer: { showPlayer = true }) }
       .fullScreenCover(isPresented: $showPlayer) {
         NowPlayingView(player: player, library: library)
-      }.alert(
+      }
+      .fullScreenCover(isPresented: Binding(
+        get: { !hasCompletedOnboarding },
+        set: { if !$0 { hasCompletedOnboarding = true } }
+      )) {
+        WelcomeView { hasCompletedOnboarding = true }
+      }
+      .alert(
         "Playback Error",
         isPresented: Binding(
           get: { player.errorMessage != nil }, set: { if !$0 { player.clearError() } })

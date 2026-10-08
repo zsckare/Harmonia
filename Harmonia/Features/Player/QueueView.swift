@@ -1,24 +1,17 @@
 import SwiftUI
 
-/// Displays the current song and the effective upcoming playback queue.
-/// Muestra la canción actual y la cola efectiva de próximas canciones.
+/// Displays and edits the effective upcoming playback queue.
+/// Muestra y permite editar la cola efectiva de próximas canciones.
 struct QueueView: View {
     let player: PlayerViewModel
-
-    @Environment(\.dismiss)
-    private var dismiss
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             List {
                 if let currentSong = player.currentSong {
                     Section("Now Playing") {
-                        SongRow(
-                            song: currentSong,
-                            isCurrentSong: true
-                        ) {
-                            dismiss()
-                        }
+                        SongRow(song: currentSong, isCurrentSong: true) { dismiss() }
                     }
                 }
 
@@ -31,22 +24,20 @@ struct QueueView: View {
                         )
                     } else {
                         ForEach(player.upNext) { song in
-                            SongRow(
-                                song: song,
-                                isCurrentSong: false
-                            ) {
+                            SongRow(song: song, isCurrentSong: false) {
                                 player.play(song)
                                 dismiss()
                             }
                         }
+                        .onMove(perform: player.moveUpNext)
+                        .onDelete(perform: player.removeFromUpNext)
                     }
                 }
             }
             .navigationTitle("Queue")
             .toolbar {
-                Button("Done") {
-                    dismiss()
-                }
+                ToolbarItem(placement: .topBarLeading) { EditButton() }
+                ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
             }
         }
     }

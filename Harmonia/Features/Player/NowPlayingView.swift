@@ -50,6 +50,11 @@ struct NowPlayingView: View {
   @State
   private var isShowingQueue = false
 
+  /// Controls presentation of advanced playback settings.
+  /// Controla la presentación de ajustes avanzados de reproducción.
+  @State
+  private var isShowingPlaybackSettings = false
+
   // MARK: - Body
 
   var body: some View {
@@ -87,6 +92,8 @@ struct NowPlayingView: View {
 
         progress
 
+        AudioLevelView(level: player.audioLevel)
+
         controls
 
         Spacer()
@@ -97,10 +104,11 @@ struct NowPlayingView: View {
     }
     .sheet(isPresented: $isShowingQueue) {
       QueueView(player: player)
-        .presentationDetents([
-          .medium,
-          .large,
-        ])
+        .presentationDetents([.medium, .large])
+    }
+    .sheet(isPresented: $isShowingPlaybackSettings) {
+      PlaybackSettingsView(player: player)
+        .presentationDetents([.medium, .large])
     }
     .preferredColorScheme(.dark)
   }
@@ -139,13 +147,16 @@ struct NowPlayingView: View {
 
       Spacer()
 
-      // Invisible element used to keep the title centered.
-      // Elemento invisible utilizado para mantener el título centrado.
-      Color.clear
-        .frame(
-          width: 42,
-          height: 42
-        )
+      Button {
+        isShowingPlaybackSettings = true
+        HapticService.selection()
+      } label: {
+        Image(systemName: "ellipsis")
+          .frame(width: 42, height: 42)
+          .background(.ultraThinMaterial, in: Circle())
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("Playback settings")
     }
   }
 
@@ -171,6 +182,7 @@ struct NowPlayingView: View {
 
       Button {
         library.toggleFavorite(currentSong)
+        HapticService.selection()
       } label: {
         Image(
           systemName: library.isFavorite(currentSong)
@@ -267,6 +279,7 @@ struct NowPlayingView: View {
       // Reproducir / Pausar
       Button {
         player.togglePlayback()
+        HapticService.impact()
       } label: {
         Image(
           systemName: player.isPlaying

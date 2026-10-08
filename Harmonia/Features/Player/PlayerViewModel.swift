@@ -1,7 +1,8 @@
 import Foundation
+import AVFoundation
 import MediaPlayer
 import Observation
-
+import SwiftUI
 /// Central source of truth for Harmonia playback.
 ///
 /// Manages:
@@ -114,6 +115,19 @@ final class PlayerViewModel {
     /// después de que el usuario ya haya seleccionado otra.
     private var playbackRequestID = UUID()
 
+    // MARK: - Enhanced Playback State
+
+    private let preferences = PlaybackPreferencesService.shared
+    private var sleepTimerTask: Task<Void, Never>?
+    private var stopAtEndOfSong = false
+
+    /// Real-time normalized audio level from AVAudioEngine. / Nivel normalizado real del motor.
+    private(set) var audioLevel: Float = 0
+    private(set) var sleepTimerEndDate: Date?
+    private(set) var playbackRate: Float = 1
+    private(set) var equalizerPreset: EqualizerPreset = .flat
+    private(set) var volume: Float = 1
+
     // MARK: - Initialization
 
     init(
@@ -128,7 +142,18 @@ final class PlayerViewModel {
         self.audioPlayer = audioPlayer ?? AudioPlayerService()
         self.audioSession = audioSession ?? .shared
 
+        volume = preferences.volume
+        playbackRate = preferences.playbackRate
+        equalizerPreset = preferences.equalizerPreset
+        self.audioPlayer.volume = volume
+        self.audioPlayer.playbackRate = playbackRate
+        self.audioPlayer.setEqualizerPreset(equalizerPreset)
+        self.audioPlayer.installLevelMeter { [weak self] level in
+            Task { @MainActor [weak self] in self?.audioLevel = level }
+        }
+
         configureRemoteCommands()
+        configureAudioNotifications()
     }
 
     // MARK: - Library
@@ -197,6 +222,70 @@ final class PlayerViewModel {
     /// Limpia el error actual de reproducción.
     func clearError() {
         errorMessage = nil
+    }
+
+    // MARK: - Playback Enhancements
+
+    func setVolume(_ value: Float) {
+        volume = min(max(value, 0), 1)
+        audioPlayer.volume = volume
+        preferences.volume = volume
+    }
+
+    func setPlaybackRate(_ rate: Float) {
+        playbackRate = min(max(rate, 0.5), 2)
+        audioPlayer.playbackRate = playbackRate
+        preferences.playbackRate = playbackRate
+    }
+
+    func setEqualizerPreset(_ preset: EqualizerPreset) {
+        equalizerPreset = preset
+        audioPlayer.setEqualizerPreset(preset)
+        preferences.equalizerPreset = preset
+    }
+
+    func startSleepTimer(_ option: SleepTimerOption) {
+        cancelSleepTimer()
+        if option == .endOfSong {
+            stopAtEndOfSong = true
+            return
+        }
+        guard let seconds = option.seconds else { return }
+        sleepTimerEndDate = Date().addingTimeInterval(seconds)
+        sleepTimerTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled, let self else { return }
+            self.pause()
+            self.sleepTimerEndDate = nil
+        }
+    }
+
+    func cancelSleepTimer() {
+        sleepTimerTask?.cancel()
+        sleepTimerTask = nil
+        sleepTimerEndDate = nil
+        stopAtEndOfSong = false
+    }
+
+    /// Moves a song in Up Next. / Reordena una canción en Up Next.
+    func moveUpNext(fromOffsets: IndexSet, toOffset: Int) {
+        guard let currentSong, let currentIndex = playbackQueue.firstIndex(of: currentSong) else { return }
+        var upcoming = Array(playbackQueue.dropFirst(currentIndex + 1))
+        upcoming.move(fromOffsets: fromOffsets, toOffset: toOffset)
+        playbackQueue = Array(playbackQueue.prefix(currentIndex + 1)) + upcoming
+    }
+
+    func removeFromUpNext(atOffsets offsets: IndexSet) {
+        guard let currentSong, let currentIndex = playbackQueue.firstIndex(of: currentSong) else { return }
+        var upcoming = Array(playbackQueue.dropFirst(currentIndex + 1))
+        upcoming.remove(atOffsets: offsets)
+        playbackQueue = Array(playbackQueue.prefix(currentIndex + 1)) + upcoming
+    }
+
+    func playNext(_ song: Song) {
+        guard let currentSong, let index = playbackQueue.firstIndex(of: currentSong) else { play(song); return }
+        playbackQueue.removeAll { $0 == song }
+        playbackQueue.insert(song, at: min(index + 1, playbackQueue.count))
     }
 
     // MARK: - Seeking
@@ -590,6 +679,12 @@ final class PlayerViewModel {
     private func handleGaplessTransition(
         to song: Song
     ) {
+        if stopAtEndOfSong {
+            stopAtEndOfSong = false
+            pause()
+            return
+        }
+
         currentSong = song
         currentTime = audioPlayer.currentTime
         duration = audioPlayer.duration
@@ -672,6 +767,43 @@ final class PlayerViewModel {
         ]
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    // MARK: - Audio Interruptions & Routes
+
+    private func configureAudioNotifications() {
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor [weak self] in self?.handleAudioInterruption(notification) }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor [weak self] in self?.handleRouteChange(notification) }
+        }
+    }
+
+    private func handleAudioInterruption(_ notification: Notification) {
+        guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        if type == .began {
+            if isPlaying { pause() }
+        } else if let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt,
+                  AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume) {
+            resumeOrLoad()
+        }
+    }
+
+    private func handleRouteChange(_ notification: Notification) {
+        guard let raw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              AVAudioSession.RouteChangeReason(rawValue: raw) == .oldDeviceUnavailable else { return }
+        if isPlaying { pause() }
     }
 
     // MARK: - Remote Commands
