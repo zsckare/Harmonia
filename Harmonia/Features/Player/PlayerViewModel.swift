@@ -118,6 +118,8 @@ final class PlayerViewModel {
     // MARK: - Enhanced Playback State
 
     private let preferences = PlaybackPreferencesService.shared
+    private let sessionPersistence = PlaybackSessionPersistenceService.shared
+    private var lastSessionSaveDate = Date.distantPast
     private var sleepTimerTask: Task<Void, Never>?
     private var stopAtEndOfSong = false
 
@@ -189,6 +191,79 @@ final class PlayerViewModel {
 
         currentSong = songs[0]
         rebuildPlaybackQueue(keeping: songs[0])
+    }
+
+    // MARK: - Playback Session Restoration
+
+    /// Restores the last selected song, position and queue without autoplay.
+    /// Restaura la última canción, posición y cola sin reproducir automáticamente.
+    func restoreLastPlaybackSession() {
+        guard let session = sessionPersistence.load() else { return }
+
+        let songsByID = Dictionary(uniqueKeysWithValues: queue.map { ($0.id, $0) })
+        guard let restoredSong = songsByID[session.songID] else {
+            sessionPersistence.clear()
+            return
+        }
+
+        let restoredQueue = session.queueIDs.compactMap { songsByID[$0] }
+        playbackQueue = restoredQueue.contains(restoredSong)
+            ? restoredQueue
+            : [restoredSong] + restoredQueue.filter { $0 != restoredSong }
+
+        // Include newly imported songs that did not exist when the session was saved.
+        // Incluye canciones nuevas que no existían cuando se guardó la sesión.
+        let restoredIDs = Set(playbackQueue.map(\.id))
+        playbackQueue.append(contentsOf: queue.filter { !restoredIDs.contains($0.id) })
+
+        isShuffleEnabled = session.isShuffleEnabled
+        repeatMode = session.repeatMode
+
+        do {
+            try audioPlayer.load(restoredSong)
+            let restoredPosition = min(max(session.position, 0), audioPlayer.duration)
+            audioPlayer.seek(to: restoredPosition)
+
+            currentSong = restoredSong
+            currentTime = audioPlayer.currentTime
+            duration = audioPlayer.duration
+            isPlaying = false
+            errorMessage = nil
+
+            prepareGaplessSuccessor()
+            updateNowPlaying()
+        } catch {
+            sessionPersistence.clear()
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Saves the current session. Safe to call from lifecycle events.
+    /// Guarda la sesión actual. Es seguro llamarlo desde eventos del lifecycle.
+    func persistPlaybackSession() {
+        guard let currentSong else {
+            sessionPersistence.clear()
+            return
+        }
+
+        let session = PlaybackSession(
+            songID: currentSong.id,
+            position: currentTime,
+            queueIDs: playbackQueue.map(\.id),
+            isShuffleEnabled: isShuffleEnabled,
+            repeatMode: repeatMode,
+            savedAt: .now
+        )
+
+        sessionPersistence.save(session)
+        lastSessionSaveDate = .now
+    }
+
+    /// Avoids writing storage on every 250 ms progress tick.
+    /// Evita escribir almacenamiento en cada tick de progreso de 250 ms.
+    private func persistPlaybackSessionIfNeeded() {
+        guard Date().timeIntervalSince(lastSessionSaveDate) >= 5 else { return }
+        persistPlaybackSession()
     }
 
     // MARK: - Playback
@@ -284,6 +359,7 @@ final class PlayerViewModel {
         var upcoming = Array(playbackQueue.dropFirst(currentIndex + 1))
         upcoming.move(fromOffsets: fromOffsets, toOffset: toOffset)
         playbackQueue = Array(playbackQueue.prefix(currentIndex + 1)) + upcoming
+        persistPlaybackSession()
     }
 
     func removeFromUpNext(atOffsets offsets: IndexSet) {
@@ -291,12 +367,14 @@ final class PlayerViewModel {
         var upcoming = Array(playbackQueue.dropFirst(currentIndex + 1))
         upcoming.remove(atOffsets: offsets)
         playbackQueue = Array(playbackQueue.prefix(currentIndex + 1)) + upcoming
+        persistPlaybackSession()
     }
 
     func playNext(_ song: Song) {
         guard let currentSong, let index = playbackQueue.firstIndex(of: currentSong) else { play(song); return }
         playbackQueue.removeAll { $0 == song }
         playbackQueue.insert(song, at: min(index + 1, playbackQueue.count))
+        persistPlaybackSession()
     }
 
     // MARK: - Seeking
@@ -317,6 +395,7 @@ final class PlayerViewModel {
 
         prepareGaplessSuccessor()
         updateNowPlaying()
+        persistPlaybackSession()
     }
 
     // MARK: - Queue Navigation
@@ -416,6 +495,8 @@ final class PlayerViewModel {
         } else {
             playbackQueue = isShuffleEnabled ? queue.shuffled() : queue
         }
+
+        persistPlaybackSession()
     }
 
     /// Rebuilds the effective playback queue.
@@ -465,6 +546,7 @@ final class PlayerViewModel {
         }
 
         updateNowPlaying()
+        persistPlaybackSession()
     }
 
     // MARK: - Up Next
@@ -551,6 +633,7 @@ final class PlayerViewModel {
                 }
 
                 self.updateNowPlaying()
+                self.persistPlaybackSession()
 
             } catch is CancellationError {
                 // Cancellation is expected when another song is selected.
@@ -590,6 +673,7 @@ final class PlayerViewModel {
 
         stopProgressUpdates()
         updateNowPlaying()
+        persistPlaybackSession()
     }
 
     /// Resumes the loaded song or loads the current song if necessary.
@@ -705,6 +789,7 @@ final class PlayerViewModel {
         onSongStarted?(song)
         prepareGaplessSuccessor()
         updateNowPlaying()
+        persistPlaybackSession()
     }
 
     // MARK: - Progress
@@ -743,6 +828,7 @@ final class PlayerViewModel {
                     self.playNext()
                 } else {
                     self.updateNowPlaying()
+                    self.persistPlaybackSessionIfNeeded()
                 }
             }
         }

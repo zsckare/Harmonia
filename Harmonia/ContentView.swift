@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
+  @Environment(\.scenePhase) private var scenePhase
   @State private var player = PlayerViewModel()
   @State private var library = MusicLibraryStore()
   @State private var showPlayer = false
@@ -46,8 +47,15 @@ struct ContentView: View {
       }.task {
         await library.load()
         player.replaceLibrary(library.songs)
+        player.restoreLastPlaybackSession()
         player.onSongStarted = { song in library.recordPlayed(song) }
-      }.tint(.white).preferredColorScheme(.dark)
+      }
+      .onChange(of: scenePhase) { _, newPhase in
+        if newPhase == .inactive || newPhase == .background {
+          player.persistPlaybackSession()
+        }
+      }
+      .tint(.white).preferredColorScheme(.dark)
   }
 }
 #Preview { ContentView() }
