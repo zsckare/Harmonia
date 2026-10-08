@@ -411,10 +411,10 @@ final class PlayerViewModel {
             }
 
             do {
-                // Audio-session activation happens away from the main thread
+                // Audio-session configuration happens away from the main thread
                 // inside AudioSessionService.
                 //
-                // La activación ocurre fuera del hilo principal dentro de
+                // La configuración ocurre fuera del hilo principal dentro de
                 // AudioSessionService.
                 try await self.audioSession.activate()
 
@@ -434,7 +434,7 @@ final class PlayerViewModel {
                     self.duration = self.audioPlayer.duration
                 }
 
-                self.audioPlayer.play()
+                try self.audioPlayer.play()
 
                 self.isPlaying = self.audioPlayer.isPlaying
                 self.errorMessage = nil
@@ -510,9 +510,9 @@ final class PlayerViewModel {
 
     // MARK: - Progress
 
-    /// Starts synchronizing AVAudioPlayer progress with observable state.
+    /// Starts synchronizing audio-engine progress with observable state.
     ///
-    /// Comienza a sincronizar el progreso de AVAudioPlayer con el estado
+    /// Comienza a sincronizar el progreso del motor de audio con el estado
     /// observable.
     private func startProgressUpdates() {
         stopProgressUpdates()

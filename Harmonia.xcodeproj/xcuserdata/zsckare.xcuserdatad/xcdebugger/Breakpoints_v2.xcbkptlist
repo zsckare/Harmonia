@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Bucket
+   uuid = "1DDECE6E-AE3F-439B-939C-6DA41C31E6D1"
+   type = "1"
+   version = "2.0">
+   <Breakpoints>
+      <BreakpointProxy
+         BreakpointExtensionID = "Xcode.Breakpoint.SymbolicBreakpoint">
+         <BreakpointContent
+            uuid = "F0387682-C5C0-4C20-A5A5-87A85312CAF2"
+            shouldBeEnabled = "Yes"
+            ignoreCount = "0"
+            continueAfterRunningActions = "No"
+            symbolName = "-[AVAudioSession setActive:error:]"
+            moduleName = "">
+            <Locations>
+               <Location
+                  uuid = "F0387682-C5C0-4C20-A5A5-87A85312CAF2 - e318fe49176d9ba0"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "-[AVAudioSession setActive:error:]"
+                  moduleName = "AudioSession"
+                  usesParentBreakpointCondition = "Yes">
+               </Location>
+            </Locations>
+         </BreakpointContent>
+      </BreakpointProxy>
+      <BreakpointProxy
+         BreakpointExtensionID = "Xcode.Breakpoint.SymbolicBreakpoint">
+         <BreakpointContent
+            uuid = "7DE149B8-A37F-4912-A06C-5B6E466ABD4C"
+            shouldBeEnabled = "Yes"
+            ignoreCount = "0"
+            continueAfterRunningActions = "No"
+            symbolName = "-[AVAudioSession setActive:withOptions:error:]"
+            moduleName = "">
+            <Locations>
+               <Location
+                  uuid = "7DE149B8-A37F-4912-A06C-5B6E466ABD4C - b2e9830bdea0d02a"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "-[AVAudioSession setActive:withOptions:error:]"
+                  moduleName = "AudioSession"
+                  usesParentBreakpointCondition = "Yes">
+               </Location>
+            </Locations>
+         </BreakpointContent>
+      </BreakpointProxy>
+   </Breakpoints>
+</Bucket>
