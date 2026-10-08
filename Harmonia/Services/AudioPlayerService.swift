@@ -1,24 +1,20 @@
 import AVFoundation
 import Foundation
 
-/// Low-level audio engine used by Harmonia.
+/// Low-level dual-node audio engine used by Harmonia.
 ///
-/// Playback work intentionally lives outside `MainActor`. The service uses one
-/// `AVAudioPlayerNode` and schedules the next audio file before the current one
-/// finishes. Because both files are already queued in the same render timeline,
-/// the engine can move between compatible tracks without waiting for SwiftUI or
-/// a polling timer to request the next song.
+/// With crossfade disabled, the next file is scheduled on the active player
+/// node for true gapless playback. With crossfade enabled, the next file is
+/// scheduled on the standby node and both nodes overlap through a shared mixer.
 ///
-/// Motor de audio de bajo nivel utilizado por Harmonia.
+/// Motor de audio dual-node de bajo nivel utilizado por Harmonia.
 ///
-/// El trabajo de reproducción vive intencionalmente fuera de `MainActor`. El
-/// servicio utiliza un `AVAudioPlayerNode` y programa el siguiente archivo antes
-/// de que termine el actual. Como ambos archivos ya están en la misma línea de
-/// render, el motor puede cambiar entre tracks compatibles sin esperar a SwiftUI
-/// ni a un timer de polling.
+/// Con crossfade desactivado, el siguiente archivo se programa en el nodo
+/// activo para conservar gapless real. Con crossfade activado, el siguiente
+/// archivo se programa en el nodo standby y ambos se solapan mediante un mixer.
 final class AudioPlayerService: @unchecked Sendable {
 
-    // MARK: - Audio Engine
+    // MARK: - Audio Graph
 
     private let audioQueue = DispatchQueue(
         label: "com.harmonia.audio-engine",
@@ -26,99 +22,101 @@ final class AudioPlayerService: @unchecked Sendable {
     )
 
     private let engine = AVAudioEngine()
-    private let playerNode = AVAudioPlayerNode()
+    private let playerA = AVAudioPlayerNode()
+    private let playerB = AVAudioPlayerNode()
+    private let crossfadeMixer = AVAudioMixerNode()
     private let timePitch = AVAudioUnitTimePitch()
     private let equalizer = AVAudioUnitEQ(numberOfBands: 3)
 
-    /// File currently represented by the player state.
-    /// Archivo representado actualmente por el estado del reproductor.
+    private var activePlayerIndex = 0
+    private var activePlayer: AVAudioPlayerNode { activePlayerIndex == 0 ? playerA : playerB }
+    private var standbyPlayer: AVAudioPlayerNode { activePlayerIndex == 0 ? playerB : playerA }
+
+    // MARK: - Track State
+
     private var audioFile: AVAudioFile?
-
-    /// File already scheduled immediately after the current file.
-    /// Archivo ya programado inmediatamente después del archivo actual.
     private var queuedFile: AVAudioFile?
-
-    /// Song associated with `queuedFile`.
-    /// Canción asociada con `queuedFile`.
     private var queuedSong: Song?
-
-    /// Called when the queued song actually becomes the audible current song.
-    /// Se ejecuta cuando la canción en cola realmente se vuelve la canción audible.
     private var queuedTransitionHandler: (@Sendable (Song) -> Void)?
 
     private var loadedDuration: TimeInterval = 0
     private var segmentStartTime: TimeInterval = 0
     private var pausedTime: TimeInterval = 0
     private var storedVolume: Float = 1
-
-    /// Player-node sample position at which the current track began.
-    /// Posición de samples del nodo en la que comenzó el track actual.
+    private var storedCrossfadeDuration: TimeInterval = 0
     private var trackStartSample: AVAudioFramePosition = 0
-
-    /// Invalidates completion callbacks belonging to an old load/seek cycle.
-    /// Invalida callbacks de finalización pertenecientes a un load/seek anterior.
     private var playbackGeneration: UInt = 0
+
+    /// Work item that begins the next crossfade.
+    /// Trabajo programado que inicia el siguiente crossfade.
+    private var crossfadeStartWorkItem: DispatchWorkItem?
+
+    /// Work item that advances individual fade steps.
+    /// Trabajo que avanza los pasos individuales del fade.
+    private var fadeStepWorkItem: DispatchWorkItem?
 
     // MARK: - Initialization
 
     init() {
-        engine.attach(playerNode)
+        engine.attach(playerA)
+        engine.attach(playerB)
+        engine.attach(crossfadeMixer)
         engine.attach(timePitch)
         engine.attach(equalizer)
-        engine.connect(playerNode, to: timePitch, format: nil)
+
+        engine.connect(playerA, to: crossfadeMixer, format: nil)
+        engine.connect(playerB, to: crossfadeMixer, format: nil)
+        engine.connect(crossfadeMixer, to: timePitch, format: nil)
         engine.connect(timePitch, to: equalizer, format: nil)
         engine.connect(equalizer, to: engine.mainMixerNode, format: nil)
+
+        playerA.volume = 1
+        playerB.volume = 0
         configureEqualizerLocked(.flat)
     }
 
     // MARK: - Observable Playback Values
 
     var currentTime: TimeInterval {
-        audioQueue.sync {
-            currentTimeLocked()
-        }
+        audioQueue.sync { currentTimeLocked() }
     }
 
     var duration: TimeInterval {
-        audioQueue.sync {
-            loadedDuration
-        }
+        audioQueue.sync { loadedDuration }
     }
 
     var isPlaying: Bool {
-        audioQueue.sync {
-            playerNode.isPlaying
-        }
+        audioQueue.sync { activePlayer.isPlaying }
     }
 
     var volume: Float {
-        get {
-            audioQueue.sync {
-                storedVolume
-            }
-        }
+        get { audioQueue.sync { storedVolume } }
         set {
             audioQueue.sync {
                 storedVolume = min(max(newValue, 0), 1)
-                playerNode.volume = storedVolume
+                crossfadeMixer.outputVolume = storedVolume
             }
         }
     }
 
-
-    /// Playback rate using AVAudioUnitTimePitch. / Velocidad mediante AVAudioUnitTimePitch.
     var playbackRate: Float {
         get { audioQueue.sync { timePitch.rate } }
         set { audioQueue.sync { timePitch.rate = min(max(newValue, 0.5), 2.0) } }
     }
 
-    /// Applies an EQ preset in the real audio graph. / Aplica un preset de EQ en el grafo real.
+    /// Duration of the overlap between tracks. Zero preserves gapless mode.
+    /// Duración del solapamiento. Cero conserva el modo gapless.
+    var crossfadeDuration: TimeInterval {
+        get { audioQueue.sync { storedCrossfadeDuration } }
+        set { audioQueue.sync { storedCrossfadeDuration = max(newValue, 0) } }
+    }
+
     func setEqualizerPreset(_ preset: EqualizerPreset) {
         audioQueue.sync { configureEqualizerLocked(preset) }
     }
 
-    /// Installs a lightweight level meter tap used by SwiftUI visualization.
-    /// Instala un tap ligero para medir nivel y alimentar la visualización SwiftUI.
+    /// Installs a lightweight real PCM level meter.
+    /// Instala un medidor ligero alimentado por PCM real.
     func installLevelMeter(_ handler: @escaping @Sendable (Float) -> Void) {
         audioQueue.async { [weak self] in
             guard let self else { return }
@@ -137,8 +135,6 @@ final class AudioPlayerService: @unchecked Sendable {
 
     // MARK: - Loading
 
-    /// Loads a song and clears any previously scheduled gapless successor.
-    /// Carga una canción y elimina cualquier sucesor gapless programado antes.
     func load(_ song: Song) throws {
         guard
             let url = song.playbackURL,
@@ -148,57 +144,33 @@ final class AudioPlayerService: @unchecked Sendable {
         }
 
         try audioQueue.sync {
-            playerNode.stop()
+            cancelScheduledTransitionsLocked()
+            playerA.stop()
+            playerB.stop()
             playbackGeneration &+= 1
 
             let file = try AVAudioFile(forReading: url)
-
             audioFile = file
-            queuedFile = nil
-            queuedSong = nil
-            queuedTransitionHandler = nil
+            clearQueuedTrackLocked()
             loadedDuration = duration(for: file)
             segmentStartTime = 0
             pausedTime = 0
             trackStartSample = 0
 
-            scheduleCurrentLocked(
-                file: file,
-                from: 0
-            )
+            activePlayer.volume = 1
+            standbyPlayer.volume = 0
+            scheduleCurrentLocked(file: file, from: 0)
         }
     }
 
-    /// Preloads the next song directly after the currently scheduled track.
-    ///
-    /// Scheduling happens before the current song reaches its end, removing the
-    /// UI/timer delay that existed when `PlayerViewModel` called `playNext()`.
-    ///
-    /// Precarga la siguiente canción inmediatamente después del track actual.
-    ///
-    /// La programación ocurre antes de que termine la canción actual, eliminando
-    /// el retraso de UI/timer que existía cuando `PlayerViewModel` llamaba
-    /// `playNext()`.
+    /// Preloads the successor using gapless or dual-node crossfade scheduling.
+    /// Precarga el sucesor usando scheduling gapless o crossfade dual-node.
     func preloadNext(
         _ song: Song?,
         onTransition: (@Sendable (Song) -> Void)?
     ) throws {
         try audioQueue.sync {
-            // AVAudioPlayerNode does not provide a way to remove only the second
-            // scheduled file. We therefore only preload when no successor is
-            // already queued. A manual queue change is applied on the next load.
-            //
-            // AVAudioPlayerNode no permite eliminar únicamente el segundo archivo
-            // programado. Por eso solo precargamos cuando todavía no existe un
-            // sucesor. Un cambio manual de cola se aplica en la siguiente carga.
-            guard queuedFile == nil else {
-                return
-            }
-
-            guard let song else {
-                return
-            }
-
+            guard queuedFile == nil, let song else { return }
             guard
                 let url = song.playbackURL,
                 FileManager.default.fileExists(atPath: url.path)
@@ -207,23 +179,14 @@ final class AudioPlayerService: @unchecked Sendable {
             }
 
             let nextFile = try AVAudioFile(forReading: url)
-
             queuedFile = nextFile
             queuedSong = song
             queuedTransitionHandler = onTransition
 
-            let generation = playbackGeneration
-
-            playerNode.scheduleFile(
-                nextFile,
-                at: nil,
-                completionCallbackType: .dataPlayedBack
-            ) { [weak self] _ in
-                self?.audioQueue.async {
-                    self?.currentTrackFinishedLocked(
-                        generation: generation
-                    )
-                }
+            if effectiveCrossfadeDurationLocked() > 0 {
+                scheduleCrossfadeSuccessorLocked(nextFile)
+            } else {
+                scheduleGaplessSuccessorLocked(nextFile)
             }
         }
     }
@@ -232,105 +195,277 @@ final class AudioPlayerService: @unchecked Sendable {
 
     func play() throws {
         try audioQueue.sync {
-            guard audioFile != nil else {
-                return
-            }
+            guard audioFile != nil else { return }
+            if !engine.isRunning { try engine.start() }
+            activePlayer.play()
 
-            if !engine.isRunning {
-                try engine.start()
+            // A crossfade successor is already scheduled but its start timer is
+            // relative to playback. Re-arm it when playback resumes.
+            if queuedFile != nil, effectiveCrossfadeDurationLocked() > 0 {
+                armCrossfadeStartLocked()
             }
-
-            playerNode.play()
         }
     }
 
     func pause() {
         audioQueue.sync {
-            guard playerNode.isPlaying else {
-                return
-            }
-
+            guard activePlayer.isPlaying || standbyPlayer.isPlaying else { return }
             pausedTime = currentTimeLocked()
-            playerNode.pause()
+            activePlayer.pause()
+            standbyPlayer.pause()
+            crossfadeStartWorkItem?.cancel()
+            crossfadeStartWorkItem = nil
+            fadeStepWorkItem?.cancel()
+            fadeStepWorkItem = nil
         }
     }
 
     // MARK: - Seeking
 
-    /// Reschedules the current file from a new position.
-    ///
-    /// Seeking intentionally clears the preloaded successor. The view model
-    /// immediately asks the service to preload the appropriate next track again.
-    ///
-    /// Reprograma el archivo actual desde una nueva posición.
-    ///
-    /// Buscar una posición elimina intencionalmente el sucesor precargado. El
-    /// view model vuelve a solicitar inmediatamente el siguiente track apropiado.
     func seek(to time: TimeInterval) {
         audioQueue.sync {
-            guard let file = audioFile else {
-                return
-            }
+            guard let file = audioFile else { return }
 
-            let targetTime = min(
-                max(time, 0),
-                loadedDuration
-            )
+            let targetTime = min(max(time, 0), loadedDuration)
+            let wasPlaying = activePlayer.isPlaying
 
-            let wasPlaying = playerNode.isPlaying
-
-            playerNode.stop()
+            cancelScheduledTransitionsLocked()
+            playerA.stop()
+            playerB.stop()
             playbackGeneration &+= 1
-            queuedFile = nil
-            queuedSong = nil
-            queuedTransitionHandler = nil
+            clearQueuedTrackLocked()
+
             pausedTime = targetTime
             segmentStartTime = targetTime
             trackStartSample = 0
+            activePlayer.volume = 1
+            standbyPlayer.volume = 0
+            scheduleCurrentLocked(file: file, from: targetTime)
 
-            scheduleCurrentLocked(
-                file: file,
-                from: targetTime
-            )
+            if wasPlaying { activePlayer.play() }
+        }
+    }
 
-            if wasPlaying {
-                playerNode.play()
+    // MARK: - Gapless Scheduling
+
+    private func scheduleGaplessSuccessorLocked(_ nextFile: AVAudioFile) {
+        let generation = playbackGeneration
+        activePlayer.scheduleFile(
+            nextFile,
+            at: nil,
+            completionCallbackType: .dataPlayedBack
+        ) { [weak self] _ in
+            self?.audioQueue.async {
+                self?.currentTrackFinishedGaplessLocked(generation: generation)
             }
         }
     }
 
-    // MARK: - Private Scheduling
-
-    private func scheduleCurrentLocked(
-        file: AVAudioFile,
-        from time: TimeInterval
-    ) {
-        let sampleRate = file.processingFormat.sampleRate
-
-        guard sampleRate > 0 else {
+    private func currentTrackFinishedGaplessLocked(generation: UInt) {
+        guard generation == playbackGeneration else { return }
+        guard let nextFile = queuedFile, let nextSong = queuedSong else {
+            pausedTime = loadedDuration
             return
         }
+
+        let handler = queuedTransitionHandler
+        audioFile = nextFile
+        clearQueuedTrackLocked()
+        loadedDuration = duration(for: nextFile)
+        segmentStartTime = 0
+        pausedTime = 0
+
+        if let nodeTime = activePlayer.lastRenderTime,
+           let playerTime = activePlayer.playerTime(forNodeTime: nodeTime) {
+            trackStartSample = playerTime.sampleTime
+        } else {
+            trackStartSample = 0
+        }
+
+        handler?(nextSong)
+    }
+
+    // MARK: - Crossfade Scheduling
+
+    private func scheduleCrossfadeSuccessorLocked(_ nextFile: AVAudioFile) {
+        let scheduledPlayer = standbyPlayer
+        let generation = playbackGeneration
+
+        scheduledPlayer.stop()
+        scheduledPlayer.volume = 0
+        scheduledPlayer.scheduleFile(
+            nextFile,
+            at: nil,
+            completionCallbackType: .dataPlayedBack
+        ) { [weak self, weak scheduledPlayer] _ in
+            self?.audioQueue.async {
+                guard
+                    let self,
+                    let scheduledPlayer,
+                    generation == self.playbackGeneration,
+                    self.activePlayer === scheduledPlayer,
+                    self.queuedFile == nil
+                else {
+                    return
+                }
+
+                // This is the final track and no further crossfade successor
+                // exists. Keep the observable time at the real end so the
+                // normal PlayerViewModel end-of-queue path can run.
+                //
+                // Este es el último track y no existe otro sucesor para
+                // crossfade. Conservamos el tiempo observable en el final real
+                // para que PlayerViewModel cierre correctamente la cola.
+                self.pausedTime = self.loadedDuration
+            }
+        }
+
+        if activePlayer.isPlaying {
+            armCrossfadeStartLocked()
+        }
+    }
+
+    /// Arms the crossfade according to the remaining audible time.
+    /// Programa el crossfade según el tiempo audible restante.
+    private func armCrossfadeStartLocked() {
+        crossfadeStartWorkItem?.cancel()
+        crossfadeStartWorkItem = nil
+
+        guard queuedFile != nil else { return }
+        let fadeDuration = effectiveCrossfadeDurationLocked()
+        guard fadeDuration > 0 else { return }
+
+        let remaining = max(loadedDuration - currentTimeLocked(), 0)
+        let delay = max(remaining - fadeDuration, 0)
+        let generation = playbackGeneration
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.beginCrossfadeLocked(generation: generation, duration: fadeDuration)
+        }
+        crossfadeStartWorkItem = work
+        audioQueue.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    private func beginCrossfadeLocked(generation: UInt, duration: TimeInterval) {
+        guard generation == playbackGeneration else { return }
+        guard queuedFile != nil, queuedSong != nil else { return }
+        guard activePlayer.isPlaying else { return }
+
+        crossfadeStartWorkItem = nil
+        standbyPlayer.volume = 0
+        standbyPlayer.play()
+
+        let oldPlayer = activePlayer
+        let newPlayer = standbyPlayer
+        let steps = max(Int(duration * 30), 1)
+        runFadeStepLocked(
+            step: 0,
+            totalSteps: steps,
+            duration: duration,
+            generation: generation,
+            oldPlayer: oldPlayer,
+            newPlayer: newPlayer
+        )
+    }
+
+    private func runFadeStepLocked(
+        step: Int,
+        totalSteps: Int,
+        duration: TimeInterval,
+        generation: UInt,
+        oldPlayer: AVAudioPlayerNode,
+        newPlayer: AVAudioPlayerNode
+    ) {
+        guard generation == playbackGeneration else { return }
+
+        let progress = min(max(Float(step) / Float(totalSteps), 0), 1)
+        oldPlayer.volume = 1 - progress
+        newPlayer.volume = progress
+
+        guard step < totalSteps else {
+            finishCrossfadeLocked(
+                generation: generation,
+                duration: duration,
+                oldPlayer: oldPlayer,
+                newPlayer: newPlayer
+            )
+            return
+        }
+
+        let interval = duration / Double(totalSteps)
+        let work = DispatchWorkItem { [weak self] in
+            self?.runFadeStepLocked(
+                step: step + 1,
+                totalSteps: totalSteps,
+                duration: duration,
+                generation: generation,
+                oldPlayer: oldPlayer,
+                newPlayer: newPlayer
+            )
+        }
+        fadeStepWorkItem = work
+        audioQueue.asyncAfter(deadline: .now() + interval, execute: work)
+    }
+
+    private func finishCrossfadeLocked(
+        generation: UInt,
+        duration: TimeInterval,
+        oldPlayer: AVAudioPlayerNode,
+        newPlayer: AVAudioPlayerNode
+    ) {
+        guard generation == playbackGeneration else { return }
+        guard let nextFile = queuedFile, let nextSong = queuedSong else { return }
+
+        fadeStepWorkItem = nil
+        oldPlayer.stop()
+        oldPlayer.volume = 0
+        newPlayer.volume = 1
+
+        activePlayerIndex = activePlayerIndex == 0 ? 1 : 0
+        audioFile = nextFile
+        loadedDuration = self.duration(for: nextFile)
+        segmentStartTime = min(duration, loadedDuration)
+        pausedTime = segmentStartTime
+
+        if let nodeTime = activePlayer.lastRenderTime,
+           let playerTime = activePlayer.playerTime(forNodeTime: nodeTime) {
+            trackStartSample = playerTime.sampleTime
+        } else {
+            trackStartSample = 0
+        }
+
+        let handler = queuedTransitionHandler
+        clearQueuedTrackLocked()
+        handler?(nextSong)
+    }
+
+    /// Never overlaps longer than either track can reasonably support.
+    /// Nunca solapa más tiempo del que los tracks pueden soportar razonablemente.
+    private func effectiveCrossfadeDurationLocked() -> TimeInterval {
+        guard storedCrossfadeDuration > 0 else { return 0 }
+        guard loadedDuration > 0 else { return 0 }
+        return min(storedCrossfadeDuration, max(loadedDuration * 0.5, 0))
+    }
+
+    // MARK: - Current Track Scheduling
+
+    private func scheduleCurrentLocked(file: AVAudioFile, from time: TimeInterval) {
+        let sampleRate = file.processingFormat.sampleRate
+        guard sampleRate > 0 else { return }
 
         let requestedFrame = AVAudioFramePosition(time * sampleRate)
         let startFrame = min(max(requestedFrame, 0), file.length)
         let remainingFrames = file.length - startFrame
-
-        guard remainingFrames > 0 else {
-            return
-        }
+        guard remainingFrames > 0 else { return }
 
         let frameCount = AVAudioFrameCount(
-            min(
-                remainingFrames,
-                AVAudioFramePosition(UInt32.max)
-            )
+            min(remainingFrames, AVAudioFramePosition(UInt32.max))
         )
-
         segmentStartTime = Double(startFrame) / sampleRate
-
         let generation = playbackGeneration
 
-        playerNode.scheduleSegment(
+        activePlayer.scheduleSegment(
             file,
             startingFrame: startFrame,
             frameCount: frameCount,
@@ -338,50 +473,32 @@ final class AudioPlayerService: @unchecked Sendable {
             completionCallbackType: .dataPlayedBack
         ) { [weak self] _ in
             self?.audioQueue.async {
-                self?.currentTrackFinishedLocked(
-                    generation: generation
-                )
+                guard let self, generation == self.playbackGeneration else { return }
+                // In crossfade mode the transition is owned by the fade workflow.
+                // If there is no successor, however, this is simply the end of
+                // the queue and we must expose the final playback position.
+                if self.effectiveCrossfadeDurationLocked() == 0 {
+                    self.currentTrackFinishedGaplessLocked(generation: generation)
+                } else if self.queuedFile == nil {
+                    self.pausedTime = self.loadedDuration
+                }
             }
         }
     }
 
-    /// Handles the exact render-time boundary between two scheduled tracks.
-    /// Maneja el límite exacto de render entre dos tracks programados.
-    private func currentTrackFinishedLocked(
-        generation: UInt
-    ) {
-        guard generation == playbackGeneration else {
-            return
-        }
+    // MARK: - Helpers
 
-        guard
-            let nextFile = queuedFile,
-            let nextSong = queuedSong
-        else {
-            pausedTime = loadedDuration
-            return
-        }
+    private func cancelScheduledTransitionsLocked() {
+        crossfadeStartWorkItem?.cancel()
+        crossfadeStartWorkItem = nil
+        fadeStepWorkItem?.cancel()
+        fadeStepWorkItem = nil
+    }
 
-        let handler = queuedTransitionHandler
-
-        audioFile = nextFile
+    private func clearQueuedTrackLocked() {
         queuedFile = nil
         queuedSong = nil
         queuedTransitionHandler = nil
-        loadedDuration = duration(for: nextFile)
-        segmentStartTime = 0
-        pausedTime = 0
-
-        if
-            let nodeTime = playerNode.lastRenderTime,
-            let playerTime = playerNode.playerTime(forNodeTime: nodeTime)
-        {
-            trackStartSample = playerTime.sampleTime
-        } else {
-            trackStartSample = 0
-        }
-
-        handler?(nextSong)
     }
 
     private func configureEqualizerLocked(_ preset: EqualizerPreset) {
@@ -404,45 +521,25 @@ final class AudioPlayerService: @unchecked Sendable {
         }
     }
 
-    // MARK: - Time Helpers
-
     private func currentTimeLocked() -> TimeInterval {
-        guard playerNode.isPlaying else {
-            return pausedTime
-        }
-
+        guard activePlayer.isPlaying else { return pausedTime }
         guard
-            let nodeTime = playerNode.lastRenderTime,
-            let playerTime = playerNode.playerTime(forNodeTime: nodeTime),
+            let nodeTime = activePlayer.lastRenderTime,
+            let playerTime = activePlayer.playerTime(forNodeTime: nodeTime),
             playerTime.sampleRate > 0
-        else {
-            return pausedTime
-        }
+        else { return pausedTime }
 
-        let relativeSample = max(
-            playerTime.sampleTime - trackStartSample,
-            0
-        )
-
+        let relativeSample = max(playerTime.sampleTime - trackStartSample, 0)
         let elapsed = Double(relativeSample) / playerTime.sampleRate
-
-        return min(
-            segmentStartTime + elapsed,
-            loadedDuration
-        )
+        return min(segmentStartTime + elapsed, loadedDuration)
     }
 
     private func duration(for file: AVAudioFile) -> TimeInterval {
         let sampleRate = file.processingFormat.sampleRate
-
-        guard sampleRate > 0 else {
-            return 0
-        }
-
+        guard sampleRate > 0 else { return 0 }
         return Double(file.length) / sampleRate
     }
 }
-
 
 // MARK: - Audio Player Error
 

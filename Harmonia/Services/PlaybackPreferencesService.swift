@@ -21,4 +21,9 @@ final class PlaybackPreferencesService: @unchecked Sendable {
         get { EqualizerPreset(rawValue: defaults.string(forKey: "playback.eq") ?? "") ?? .flat }
         set { defaults.set(newValue.rawValue, forKey: "playback.eq") }
     }
+
+    var crossfadeOption: CrossfadeOption {
+        get { CrossfadeOption(rawValue: defaults.integer(forKey: "playback.crossfade")) ?? .off }
+        set { defaults.set(newValue.rawValue, forKey: "playback.crossfade") }
+    }
 }

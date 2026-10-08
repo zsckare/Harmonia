@@ -12,6 +12,22 @@ enum EqualizerPreset: String, CaseIterable, Identifiable, Codable {
     var id: String { rawValue }
 }
 
+
+/// Configurable overlap between consecutive songs.
+/// Solapamiento configurable entre canciones consecutivas.
+enum CrossfadeOption: Int, CaseIterable, Identifiable, Codable {
+    case off = 0
+    case two = 2
+    case four = 4
+    case six = 6
+    case eight = 8
+    case ten = 10
+
+    var id: Int { rawValue }
+    var seconds: TimeInterval { TimeInterval(rawValue) }
+    var title: String { rawValue == 0 ? "Off" : "\(rawValue) sec" }
+}
+
 enum SleepTimerOption: String, CaseIterable, Identifiable {
     case fifteen = "15 min"
     case thirty = "30 min"

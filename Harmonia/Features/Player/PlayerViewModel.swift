@@ -126,6 +126,7 @@ final class PlayerViewModel {
     private(set) var sleepTimerEndDate: Date?
     private(set) var playbackRate: Float = 1
     private(set) var equalizerPreset: EqualizerPreset = .flat
+    private(set) var crossfadeOption: CrossfadeOption = .off
     private(set) var volume: Float = 1
 
     // MARK: - Initialization
@@ -145,8 +146,10 @@ final class PlayerViewModel {
         volume = preferences.volume
         playbackRate = preferences.playbackRate
         equalizerPreset = preferences.equalizerPreset
+        crossfadeOption = preferences.crossfadeOption
         self.audioPlayer.volume = volume
         self.audioPlayer.playbackRate = playbackRate
+        self.audioPlayer.crossfadeDuration = crossfadeOption.seconds
         self.audioPlayer.setEqualizerPreset(equalizerPreset)
         self.audioPlayer.installLevelMeter { [weak self] level in
             Task { @MainActor [weak self] in self?.audioLevel = level }
@@ -242,6 +245,14 @@ final class PlayerViewModel {
         equalizerPreset = preset
         audioPlayer.setEqualizerPreset(preset)
         preferences.equalizerPreset = preset
+    }
+
+    /// Changes the overlap used between consecutive songs.
+    /// Cambia el solapamiento utilizado entre canciones consecutivas.
+    func setCrossfadeOption(_ option: CrossfadeOption) {
+        crossfadeOption = option
+        audioPlayer.crossfadeDuration = option.seconds
+        preferences.crossfadeOption = option
     }
 
     func startSleepTimer(_ option: SleepTimerOption) {

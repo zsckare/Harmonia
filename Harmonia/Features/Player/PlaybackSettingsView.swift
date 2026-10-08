@@ -48,6 +48,23 @@ struct PlaybackSettingsView: View {
                     }
                 }
 
+                Section {
+                    Picker("Crossfade", selection: Binding(
+                        get: { player.crossfadeOption },
+                        set: { player.setCrossfadeOption($0) }
+                    )) {
+                        ForEach(CrossfadeOption.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+                } header: {
+                    Text("Transitions")
+                } footer: {
+                    Text(player.crossfadeOption == .off
+                         ? "Gapless playback stays active when Crossfade is Off."
+                         : "The next song overlaps the current song using two audio player nodes.")
+                }
+
                 Section("Sleep Timer") {
                     ForEach(SleepTimerOption.allCases) { option in
                         Button(option.rawValue) {
