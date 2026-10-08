@@ -215,6 +215,7 @@ final class PlayerViewModel {
 
         currentTime = audioPlayer.currentTime
 
+        prepareGaplessSuccessor()
         updateNowPlaying()
     }
 
@@ -432,6 +433,8 @@ final class PlayerViewModel {
                     self.currentSong = song
                     self.currentTime = 0
                     self.duration = self.audioPlayer.duration
+
+                    self.prepareGaplessSuccessor()
                 }
 
                 try self.audioPlayer.play()
@@ -506,6 +509,96 @@ final class PlayerViewModel {
             for: currentSong,
             shouldLoadSong: false
         )
+    }
+
+    // MARK: - Gapless Playback
+
+    /// Returns the song that should be rendered immediately after `song`.
+    ///
+    /// Repeat One queues the same track again. Repeat All wraps at the end of
+    /// the queue. With Repeat Off, the last song has no gapless successor.
+    ///
+    /// Devuelve la canción que debe renderizarse inmediatamente después de
+    /// `song`. Repeat One programa el mismo track nuevamente, Repeat All vuelve
+    /// al inicio y Repeat Off no programa un sucesor para la última canción.
+    private func gaplessSuccessor(
+        after song: Song
+    ) -> Song? {
+        guard
+            !playbackQueue.isEmpty,
+            let currentIndex = playbackQueue.firstIndex(of: song)
+        else {
+            return nil
+        }
+
+        if repeatMode == .one {
+            return song
+        }
+
+        let nextIndex = currentIndex + 1
+
+        if nextIndex < playbackQueue.count {
+            return playbackQueue[nextIndex]
+        }
+
+        if repeatMode == .all {
+            return playbackQueue.first
+        }
+
+        return nil
+    }
+
+    /// Asks the audio engine to schedule the next track before the current one
+    /// reaches its render boundary.
+    ///
+    /// Solicita al motor que programe el siguiente track antes de que el actual
+    /// llegue a su límite de render.
+    private func prepareGaplessSuccessor() {
+        guard let currentSong else {
+            return
+        }
+
+        let nextSong = gaplessSuccessor(
+            after: currentSong
+        )
+
+        do {
+            try audioPlayer.preloadNext(
+                nextSong
+            ) { [weak self] transitionedSong in
+                Task { @MainActor [weak self] in
+                    self?.handleGaplessTransition(
+                        to: transitionedSong
+                    )
+                }
+            }
+        } catch {
+            // A failed preload must not interrupt the song already playing.
+            // The normal end-of-track path can still attempt navigation.
+            //
+            // Un fallo de precarga no debe interrumpir la canción actual. La
+            // ruta normal de fin de track todavía puede intentar navegar.
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Synchronizes observable/UI state after AVAudioEngine has crossed the
+    /// gapless boundary and the queued song is already playing.
+    ///
+    /// Sincroniza el estado observable/UI después de que AVAudioEngine cruza
+    /// el límite gapless y la canción en cola ya se está reproduciendo.
+    private func handleGaplessTransition(
+        to song: Song
+    ) {
+        currentSong = song
+        currentTime = audioPlayer.currentTime
+        duration = audioPlayer.duration
+        isPlaying = audioPlayer.isPlaying
+        errorMessage = nil
+
+        onSongStarted?(song)
+        prepareGaplessSuccessor()
+        updateNowPlaying()
     }
 
     // MARK: - Progress

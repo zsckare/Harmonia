@@ -3,15 +3,19 @@ import Foundation
 
 /// Low-level audio engine used by Harmonia.
 ///
-/// Audio work intentionally lives outside `MainActor`. SwiftUI and
-/// `PlayerViewModel` remain on the main actor, while AVAudioEngine and
-/// AVAudioPlayerNode are serialized on a dedicated audio queue.
+/// Playback work intentionally lives outside `MainActor`. The service uses one
+/// `AVAudioPlayerNode` and schedules the next audio file before the current one
+/// finishes. Because both files are already queued in the same render timeline,
+/// the engine can move between compatible tracks without waiting for SwiftUI or
+/// a polling timer to request the next song.
 ///
 /// Motor de audio de bajo nivel utilizado por Harmonia.
 ///
-/// El trabajo de audio vive intencionalmente fuera de `MainActor`. SwiftUI y
-/// `PlayerViewModel` permanecen en el actor principal, mientras AVAudioEngine
-/// y AVAudioPlayerNode se serializan en una cola dedicada de audio.
+/// El trabajo de reproducción vive intencionalmente fuera de `MainActor`. El
+/// servicio utiliza un `AVAudioPlayerNode` y programa el siguiente archivo antes
+/// de que termine el actual. Como ambos archivos ya están en la misma línea de
+/// render, el motor puede cambiar entre tracks compatibles sin esperar a SwiftUI
+/// ni a un timer de polling.
 final class AudioPlayerService: @unchecked Sendable {
 
     // MARK: - Audio Engine
@@ -24,36 +28,38 @@ final class AudioPlayerService: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
 
-    /// The currently opened file must stay alive while its buffers are used.
-    /// El archivo abierto debe permanecer vivo mientras se utilizan sus buffers.
+    /// File currently represented by the player state.
+    /// Archivo representado actualmente por el estado del reproductor.
     private var audioFile: AVAudioFile?
 
-    /// Playback duration of the currently loaded file.
-    /// Duración del archivo cargado actualmente.
+    /// File already scheduled immediately after the current file.
+    /// Archivo ya programado inmediatamente después del archivo actual.
+    private var queuedFile: AVAudioFile?
+
+    /// Song associated with `queuedFile`.
+    /// Canción asociada con `queuedFile`.
+    private var queuedSong: Song?
+
+    /// Called when the queued song actually becomes the audible current song.
+    /// Se ejecuta cuando la canción en cola realmente se vuelve la canción audible.
+    private var queuedTransitionHandler: (@Sendable (Song) -> Void)?
+
     private var loadedDuration: TimeInterval = 0
-
-    /// Position from which the currently scheduled segment starts.
-    /// Posición desde la que comienza el segmento programado actualmente.
     private var segmentStartTime: TimeInterval = 0
-
-    /// Position preserved when playback is paused.
-    /// Posición conservada cuando la reproducción está pausada.
     private var pausedTime: TimeInterval = 0
-
-    /// Volume retained even when no file is loaded.
-    /// Volumen conservado incluso cuando no existe un archivo cargado.
     private var storedVolume: Float = 1
+
+    /// Player-node sample position at which the current track began.
+    /// Posición de samples del nodo en la que comenzó el track actual.
+    private var trackStartSample: AVAudioFramePosition = 0
+
+    /// Invalidates completion callbacks belonging to an old load/seek cycle.
+    /// Invalida callbacks de finalización pertenecientes a un load/seek anterior.
+    private var playbackGeneration: UInt = 0
 
     // MARK: - Initialization
 
     init() {
-        // AVAudioEngine graph construction is inexpensive and does not start
-        // the audio session. All runtime playback operations happen later on
-        // `audioQueue`.
-        //
-        // Construir el grafo de AVAudioEngine es económico y no inicia la
-        // sesión de audio. Las operaciones de reproducción ocurren después en
-        // `audioQueue`.
         engine.attach(playerNode)
         engine.connect(
             playerNode,
@@ -98,8 +104,8 @@ final class AudioPlayerService: @unchecked Sendable {
 
     // MARK: - Loading
 
-    /// Opens a song and schedules it from the beginning.
-    /// Abre una canción y la programa desde el inicio.
+    /// Loads a song and clears any previously scheduled gapless successor.
+    /// Carga una canción y elimina cualquier sucesor gapless programado antes.
     func load(_ song: Song) throws {
         guard
             let url = song.playbackURL,
@@ -110,29 +116,87 @@ final class AudioPlayerService: @unchecked Sendable {
 
         try audioQueue.sync {
             playerNode.stop()
+            playbackGeneration &+= 1
 
-            let file = try AVAudioFile(
-                forReading: url
-            )
+            let file = try AVAudioFile(forReading: url)
 
             audioFile = file
-            loadedDuration = duration(
-                for: file
-            )
+            queuedFile = nil
+            queuedSong = nil
+            queuedTransitionHandler = nil
+            loadedDuration = duration(for: file)
             segmentStartTime = 0
             pausedTime = 0
+            trackStartSample = 0
 
-            scheduleLocked(
+            scheduleCurrentLocked(
                 file: file,
                 from: 0
             )
         }
     }
 
+    /// Preloads the next song directly after the currently scheduled track.
+    ///
+    /// Scheduling happens before the current song reaches its end, removing the
+    /// UI/timer delay that existed when `PlayerViewModel` called `playNext()`.
+    ///
+    /// Precarga la siguiente canción inmediatamente después del track actual.
+    ///
+    /// La programación ocurre antes de que termine la canción actual, eliminando
+    /// el retraso de UI/timer que existía cuando `PlayerViewModel` llamaba
+    /// `playNext()`.
+    func preloadNext(
+        _ song: Song?,
+        onTransition: (@Sendable (Song) -> Void)?
+    ) throws {
+        try audioQueue.sync {
+            // AVAudioPlayerNode does not provide a way to remove only the second
+            // scheduled file. We therefore only preload when no successor is
+            // already queued. A manual queue change is applied on the next load.
+            //
+            // AVAudioPlayerNode no permite eliminar únicamente el segundo archivo
+            // programado. Por eso solo precargamos cuando todavía no existe un
+            // sucesor. Un cambio manual de cola se aplica en la siguiente carga.
+            guard queuedFile == nil else {
+                return
+            }
+
+            guard let song else {
+                return
+            }
+
+            guard
+                let url = song.playbackURL,
+                FileManager.default.fileExists(atPath: url.path)
+            else {
+                throw AudioPlayerError.resourceNotFound(song.title)
+            }
+
+            let nextFile = try AVAudioFile(forReading: url)
+
+            queuedFile = nextFile
+            queuedSong = song
+            queuedTransitionHandler = onTransition
+
+            let generation = playbackGeneration
+
+            playerNode.scheduleFile(
+                nextFile,
+                at: nil,
+                completionCallbackType: .dataPlayedBack
+            ) { [weak self] _ in
+                self?.audioQueue.async {
+                    self?.currentTrackFinishedLocked(
+                        generation: generation
+                    )
+                }
+            }
+        }
+    }
+
     // MARK: - Playback
 
-    /// Starts or resumes playback on Harmonia's dedicated audio queue.
-    /// Inicia o reanuda la reproducción en la cola dedicada de Harmonia.
     func play() throws {
         try audioQueue.sync {
             guard audioFile != nil else {
@@ -147,8 +211,6 @@ final class AudioPlayerService: @unchecked Sendable {
         }
     }
 
-    /// Pauses playback while preserving the exact playback position.
-    /// Pausa conservando la posición exacta de reproducción.
     func pause() {
         audioQueue.sync {
             guard playerNode.isPlaying else {
@@ -162,8 +224,15 @@ final class AudioPlayerService: @unchecked Sendable {
 
     // MARK: - Seeking
 
-    /// Reschedules the current file from a new playback position.
+    /// Reschedules the current file from a new position.
+    ///
+    /// Seeking intentionally clears the preloaded successor. The view model
+    /// immediately asks the service to preload the appropriate next track again.
+    ///
     /// Reprograma el archivo actual desde una nueva posición.
+    ///
+    /// Buscar una posición elimina intencionalmente el sucesor precargado. El
+    /// view model vuelve a solicitar inmediatamente el siguiente track apropiado.
     func seek(to time: TimeInterval) {
         audioQueue.sync {
             guard let file = audioFile else {
@@ -178,10 +247,15 @@ final class AudioPlayerService: @unchecked Sendable {
             let wasPlaying = playerNode.isPlaying
 
             playerNode.stop()
+            playbackGeneration &+= 1
+            queuedFile = nil
+            queuedSong = nil
+            queuedTransitionHandler = nil
             pausedTime = targetTime
             segmentStartTime = targetTime
+            trackStartSample = 0
 
-            scheduleLocked(
+            scheduleCurrentLocked(
                 file: file,
                 from: targetTime
             )
@@ -192,11 +266,9 @@ final class AudioPlayerService: @unchecked Sendable {
         }
     }
 
-    // MARK: - Private Helpers
+    // MARK: - Private Scheduling
 
-    /// Schedules the remaining frames of a file starting at a given time.
-    /// Programa los frames restantes del archivo desde un tiempo determinado.
-    private func scheduleLocked(
+    private func scheduleCurrentLocked(
         file: AVAudioFile,
         from time: TimeInterval
     ) {
@@ -206,15 +278,8 @@ final class AudioPlayerService: @unchecked Sendable {
             return
         }
 
-        let requestedFrame = AVAudioFramePosition(
-            time * sampleRate
-        )
-
-        let startFrame = min(
-            max(requestedFrame, 0),
-            file.length
-        )
-
+        let requestedFrame = AVAudioFramePosition(time * sampleRate)
+        let startFrame = min(max(requestedFrame, 0), file.length)
         let remainingFrames = file.length - startFrame
 
         guard remainingFrames > 0 else {
@@ -230,17 +295,64 @@ final class AudioPlayerService: @unchecked Sendable {
 
         segmentStartTime = Double(startFrame) / sampleRate
 
+        let generation = playbackGeneration
+
         playerNode.scheduleSegment(
             file,
             startingFrame: startFrame,
             frameCount: frameCount,
             at: nil,
-            completionHandler: nil
-        )
+            completionCallbackType: .dataPlayedBack
+        ) { [weak self] _ in
+            self?.audioQueue.async {
+                self?.currentTrackFinishedLocked(
+                    generation: generation
+                )
+            }
+        }
     }
 
-    /// Calculates the current position using AVAudioPlayerNode render time.
-    /// Calcula la posición actual utilizando el tiempo de render del nodo.
+    /// Handles the exact render-time boundary between two scheduled tracks.
+    /// Maneja el límite exacto de render entre dos tracks programados.
+    private func currentTrackFinishedLocked(
+        generation: UInt
+    ) {
+        guard generation == playbackGeneration else {
+            return
+        }
+
+        guard
+            let nextFile = queuedFile,
+            let nextSong = queuedSong
+        else {
+            pausedTime = loadedDuration
+            return
+        }
+
+        let handler = queuedTransitionHandler
+
+        audioFile = nextFile
+        queuedFile = nil
+        queuedSong = nil
+        queuedTransitionHandler = nil
+        loadedDuration = duration(for: nextFile)
+        segmentStartTime = 0
+        pausedTime = 0
+
+        if
+            let nodeTime = playerNode.lastRenderTime,
+            let playerTime = playerNode.playerTime(forNodeTime: nodeTime)
+        {
+            trackStartSample = playerTime.sampleTime
+        } else {
+            trackStartSample = 0
+        }
+
+        handler?(nextSong)
+    }
+
+    // MARK: - Time Helpers
+
     private func currentTimeLocked() -> TimeInterval {
         guard playerNode.isPlaying else {
             return pausedTime
@@ -248,15 +360,18 @@ final class AudioPlayerService: @unchecked Sendable {
 
         guard
             let nodeTime = playerNode.lastRenderTime,
-            let playerTime = playerNode.playerTime(
-                forNodeTime: nodeTime
-            ),
+            let playerTime = playerNode.playerTime(forNodeTime: nodeTime),
             playerTime.sampleRate > 0
         else {
             return pausedTime
         }
 
-        let elapsed = Double(playerTime.sampleTime) / playerTime.sampleRate
+        let relativeSample = max(
+            playerTime.sampleTime - trackStartSample,
+            0
+        )
+
+        let elapsed = Double(relativeSample) / playerTime.sampleRate
 
         return min(
             segmentStartTime + elapsed,
@@ -264,11 +379,7 @@ final class AudioPlayerService: @unchecked Sendable {
         )
     }
 
-    /// Calculates a file's duration from its frame count and sample rate.
-    /// Calcula la duración de un archivo usando sus frames y sample rate.
-    private func duration(
-        for file: AVAudioFile
-    ) -> TimeInterval {
+    private func duration(for file: AVAudioFile) -> TimeInterval {
         let sampleRate = file.processingFormat.sampleRate
 
         guard sampleRate > 0 else {
@@ -278,6 +389,7 @@ final class AudioPlayerService: @unchecked Sendable {
         return Double(file.length) / sampleRate
     }
 }
+
 
 // MARK: - Audio Player Error
 
