@@ -554,9 +554,11 @@ struct NowPlayingView: View {
 
       Spacer()
 
-      // AirPlay output selector placeholder.
-      // Placeholder para selector de salida AirPlay.
-      Image(systemName: "airplayaudio")
+      // Native AirPlay / audio output selector.
+      // Selector nativo de AirPlay / salida de audio.
+      AudioRoutePicker()
+        .frame(width: 44, height: 32)
+        .accessibilityLabel("Audio output")
 
       Spacer()
 
