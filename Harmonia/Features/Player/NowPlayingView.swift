@@ -63,6 +63,10 @@ struct NowPlayingView: View {
   @State
   private var isShowingPlaybackSettings = false
 
+  /// Controls presentation of lyrics for the current song.
+  /// Controla la presentación de letras de la canción actual.
+  @State private var isShowingLyrics = false
+
   /// Horizontal translation applied to the artwork while navigating tracks.
   /// Traslación horizontal aplicada al artwork al navegar entre canciones.
   @State private var artworkDragOffset: CGFloat = 0
@@ -130,6 +134,11 @@ struct NowPlayingView: View {
     .sheet(isPresented: $isShowingPlaybackSettings) {
       PlaybackSettingsView(player: player)
         .presentationDetents([.medium, .large])
+    }
+    .sheet(isPresented: $isShowingLyrics) {
+      LyricsView(player: player, song: currentSong)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
     }
     .preferredColorScheme(.dark)
   }
@@ -527,9 +536,16 @@ struct NowPlayingView: View {
   private var bottomControls: some View {
     HStack {
 
-      // Lyrics placeholder.
-      // Placeholder para letras.
-      Image(systemName: "quote.bubble")
+      // Lyrics powered by LRCLIB.
+      // Letras proporcionadas por LRCLIB.
+      Button {
+        isShowingLyrics = true
+        HapticService.selection()
+      } label: {
+        Image(systemName: "quote.bubble")
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("Lyrics")
 
       Spacer()
 
