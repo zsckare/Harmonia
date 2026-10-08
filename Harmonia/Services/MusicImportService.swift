@@ -1,173 +1,394 @@
 import AVFoundation
+import CryptoKit
 import Foundation
+import UniformTypeIdentifiers
 
-/// Imports external audio files into Harmonia's local Music directory
-/// and extracts the available metadata.
-///
-/// Importa archivos de audio externos al directorio local Music
-/// de Harmonia y extrae los metadatos disponibles.
+/// Describes the current import operation shown by the UI.
+/// Describe la operación de importación actual mostrada por la UI.
+struct MusicImportProgress: Sendable {
+    let current: Int
+    let total: Int
+    let filename: String
+
+    var fractionCompleted: Double {
+        guard total > 0 else { return 0 }
+        return Double(current) / Double(total)
+    }
+}
+
+/// Final result of an import operation.
+/// Resultado final de una operación de importación.
+struct MusicImportSummary: Sendable {
+    let imported: Int
+    let duplicates: Int
+    let failed: Int
+
+    var total: Int {
+        imported + duplicates + failed
+    }
+}
+
+/// Result returned by the importer together with the new songs.
+/// Resultado devuelto por el importador junto con las canciones nuevas.
+struct MusicImportResult: Sendable {
+    let songs: [Song]
+    let summary: MusicImportSummary
+}
+
+/// Imports external audio into Harmonia's private Music directory.
+/// Importa audio externo al directorio Music privado de Harmonia.
 actor MusicImportService {
 
-  // MARK: - Import
+    // MARK: - Supported Audio
 
-  /// Imports an audio file selected by the user.
-  ///
-  /// The original file may come from outside Harmonia's sandbox,
-  /// so security-scoped access is requested before reading it.
-  ///
-  /// Importa un archivo de audio seleccionado por el usuario.
-  ///
-  /// El archivo original puede encontrarse fuera del sandbox de
-  /// Harmonia, por lo que solicitamos acceso security-scoped antes
-  /// de leerlo.
-  func importSong(from sourceURL: URL) async throws -> Song {
+    private let supportedExtensions: Set<String> = [
+        "mp3", "m4a", "aac", "wav", "aif", "aiff", "caf", "flac"
+    ]
 
-    // Request temporary access to files selected through FileImporter.
-    // Solicitamos acceso temporal a archivos seleccionados mediante
-    // FileImporter.
-    let isAccessingSecurityScopedResource =
-      sourceURL.startAccessingSecurityScopedResource()
+    // MARK: - Existing Library Fingerprints
 
-    defer {
-      if isAccessingSecurityScopedResource {
-        sourceURL.stopAccessingSecurityScopedResource()
-      }
+    /// Builds missing fingerprints for songs imported by older Harmonia versions.
+    /// Genera huellas faltantes para canciones importadas por versiones anteriores.
+    func fingerprintsForExistingSongs(_ songs: [Song]) -> [UUID: String] {
+        var result: [UUID: String] = [:]
+
+        for song in songs where song.contentFingerprint == nil {
+            guard let url = song.playbackURL,
+                  FileManager.default.fileExists(atPath: url.path),
+                  let fingerprint = try? contentFingerprint(for: url)
+            else {
+                continue
+            }
+
+            result[song.id] = fingerprint
+        }
+
+        return result
     }
 
-    // MARK: Create destination
+    // MARK: - File Import
 
-    let folder = try libraryFolder()
+    /// Imports selected files while skipping audio whose content fingerprint
+    /// already exists in the Harmonia library.
+    ///
+    /// Importa archivos seleccionados omitiendo audio cuya huella de contenido
+    /// ya exista en la biblioteca de Harmonia.
+    func importSongs(
+        from urls: [URL],
+        existingFingerprints: Set<String>,
+        progress: @MainActor @Sendable (MusicImportProgress) -> Void
+    ) async -> MusicImportResult {
+        var fingerprints = existingFingerprints
+        var songs: [Song] = []
+        var duplicateCount = 0
+        var failureCount = 0
 
-    let fileExtension =
-      sourceURL.pathExtension.isEmpty
-      ? "mp3"
-      : sourceURL.pathExtension
+        for (index, url) in urls.enumerated() {
+            await progress(
+                MusicImportProgress(
+                    current: index,
+                    total: urls.count,
+                    filename: url.lastPathComponent
+                )
+            )
 
-    let destination = folder.appendingPathComponent(
-      "\(UUID().uuidString).\(fileExtension)"
-    )
+            let hasAccess = url.startAccessingSecurityScopedResource()
 
-    // Copy the selected file into Harmonia's own sandbox.
-    // Copiamos el archivo seleccionado al sandbox de Harmonia.
-    try FileManager.default.copyItem(
-      at: sourceURL,
-      to: destination
-    )
+            do {
+                defer {
+                    if hasAccess {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
 
-    // MARK: Read AVAsset
+                let fingerprint = try contentFingerprint(for: url)
 
-    let asset = AVURLAsset(url: destination)
+                if fingerprints.contains(fingerprint) {
+                    duplicateCount += 1
+                } else {
+                    let song = try await copyAndReadMetadata(
+                        from: url,
+                        fingerprint: fingerprint
+                    )
 
-    // AVFoundation represents duration using CMTime.
-    // AVFoundation representa la duración utilizando CMTime.
-    let assetDuration = try await asset.load(.duration)
-    let duration = assetDuration.seconds
+                    songs.append(song)
+                    fingerprints.insert(fingerprint)
+                }
+            } catch {
+                failureCount += 1
+            }
 
-    // Load the metadata commonly shared between audio formats.
-    // Cargamos los metadatos comunes entre los diferentes
-    // formatos de audio.
-    let metadata = try await asset.load(.commonMetadata)
-
-    // MARK: Default metadata
-
-    // If metadata is unavailable, use sensible fallback values.
-    // Si no existen metadatos, utilizamos valores predeterminados.
-    var title =
-      sourceURL
-      .deletingPathExtension()
-      .lastPathComponent
-
-    var artist = "Unknown Artist"
-    var album = "Unknown Album"
-    var artwork: Data?
-
-    // MARK: Extract metadata
-
-    for item in metadata {
-
-      guard let key = item.commonKey else {
-        continue
-      }
-
-      switch key {
-
-      case .commonKeyTitle:
-
-        if let value = try? await item.load(.stringValue),
-          !value.isEmpty
-        {
-          title = value
+            await progress(
+                MusicImportProgress(
+                    current: index + 1,
+                    total: urls.count,
+                    filename: url.lastPathComponent
+                )
+            )
         }
 
-      case .commonKeyArtist:
-
-        if let value = try? await item.load(.stringValue),
-          !value.isEmpty
-        {
-          artist = value
-        }
-
-      case .commonKeyAlbumName:
-
-        if let value = try? await item.load(.stringValue),
-          !value.isEmpty
-        {
-          album = value
-        }
-
-      case .commonKeyArtwork:
-
-        if let value = try? await item.load(.dataValue),
-          !value.isEmpty
-        {
-          artwork = value
-        }
-
-      default:
-        break
-      }
+        return MusicImportResult(
+            songs: songs,
+            summary: MusicImportSummary(
+                imported: songs.count,
+                duplicates: duplicateCount,
+                failed: failureCount
+            )
+        )
     }
 
-    // MARK: Create Song
+    // MARK: - Folder Import
 
-    return Song(
-      title: title,
-      artist: artist,
-      album: album,
-      duration: duration,
-      artworkData: artwork,
-      source: .file(path: destination.path)
-    )
-  }
+    /// Recursively scans a folder and imports supported audio files.
+    /// Recursively escanea una carpeta e importa archivos de audio soportados.
+    func importFolder(
+        from folderURL: URL,
+        existingFingerprints: Set<String>,
+        progress: @MainActor @Sendable (MusicImportProgress) -> Void
+    ) async throws -> MusicImportResult {
+        let hasAccess = folderURL.startAccessingSecurityScopedResource()
 
-  // MARK: - Local Library
+        defer {
+            if hasAccess {
+                folderURL.stopAccessingSecurityScopedResource()
+            }
+        }
 
-  /// Returns Harmonia's private Music directory.
-  ///
-  /// The directory is created automatically the first time
-  /// it is requested.
-  ///
-  /// Devuelve el directorio privado Music de Harmonia.
-  ///
-  /// El directorio se crea automáticamente la primera vez
-  /// que se solicita.
-  private func libraryFolder() throws -> URL {
+        let files = try audioFiles(in: folderURL)
+        var fingerprints = existingFingerprints
+        var songs: [Song] = []
+        var duplicateCount = 0
+        var failureCount = 0
 
-    let documentsDirectory = FileManager.default.urls(
-      for: .documentDirectory,
-      in: .userDomainMask
-    )[0]
+        for (index, fileURL) in files.enumerated() {
+            await progress(
+                MusicImportProgress(
+                    current: index,
+                    total: files.count,
+                    filename: fileURL.lastPathComponent
+                )
+            )
 
-    let musicDirectory = documentsDirectory.appendingPathComponent(
-      "Music",
-      isDirectory: true
-    )
+            do {
+                let fingerprint = try contentFingerprint(for: fileURL)
 
-    try FileManager.default.createDirectory(
-      at: musicDirectory,
-      withIntermediateDirectories: true
-    )
+                if fingerprints.contains(fingerprint) {
+                    duplicateCount += 1
+                } else {
+                    let song = try await copyAndReadMetadata(
+                        from: fileURL,
+                        fingerprint: fingerprint
+                    )
 
-    return musicDirectory
-  }
+                    songs.append(song)
+                    fingerprints.insert(fingerprint)
+                }
+            } catch {
+                // One invalid file must not abort a complete folder import.
+                // Un archivo inválido no debe cancelar toda la carpeta.
+                failureCount += 1
+            }
+
+            await progress(
+                MusicImportProgress(
+                    current: index + 1,
+                    total: files.count,
+                    filename: fileURL.lastPathComponent
+                )
+            )
+        }
+
+        return MusicImportResult(
+            songs: songs,
+            summary: MusicImportSummary(
+                imported: songs.count,
+                duplicates: duplicateCount,
+                failed: failureCount
+            )
+        )
+    }
+
+    // MARK: - Duplicate Detection
+
+    /// Calculates SHA-256 incrementally so large audio files do not need to be
+    /// loaded completely into memory.
+    ///
+    /// Calcula SHA-256 por bloques para no cargar archivos grandes completos
+    /// en memoria.
+    private func contentFingerprint(for url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
+        var hasher = SHA256()
+        let chunkSize = 1024 * 1024
+
+        while true {
+            guard let data = try handle.read(upToCount: chunkSize),
+                  !data.isEmpty
+            else {
+                break
+            }
+
+            hasher.update(data: data)
+        }
+
+        return hasher.finalize()
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    // MARK: - Import Implementation
+
+    private func copyAndReadMetadata(
+        from sourceURL: URL,
+        fingerprint: String
+    ) async throws -> Song {
+        guard isSupportedAudioFile(sourceURL) else {
+            throw MusicImportError.unsupportedFile(sourceURL.lastPathComponent)
+        }
+
+        let folder = try libraryFolder()
+        let fileExtension = sourceURL.pathExtension.lowercased()
+        let storedFilename = "\(UUID().uuidString).\(fileExtension)"
+        let destination = folder.appendingPathComponent(storedFilename)
+
+        try FileManager.default.copyItem(at: sourceURL, to: destination)
+
+        do {
+            return try await makeSong(
+                originalURL: sourceURL,
+                storedFilename: storedFilename,
+                destination: destination,
+                fingerprint: fingerprint
+            )
+        } catch {
+            try? FileManager.default.removeItem(at: destination)
+            throw error
+        }
+    }
+
+    private func makeSong(
+        originalURL: URL,
+        storedFilename: String,
+        destination: URL,
+        fingerprint: String
+    ) async throws -> Song {
+        let asset = AVURLAsset(url: destination)
+        let assetDuration = try await asset.load(.duration)
+        let metadata = try await asset.load(.commonMetadata)
+
+        var title = originalURL.deletingPathExtension().lastPathComponent
+        var artist = "Unknown Artist"
+        var album = "Unknown Album"
+        var artwork: Data?
+
+        for item in metadata {
+            guard let key = item.commonKey else { continue }
+
+            switch key {
+            case .commonKeyTitle:
+                if let value = try? await item.load(.stringValue), !value.isEmpty {
+                    title = value
+                }
+            case .commonKeyArtist:
+                if let value = try? await item.load(.stringValue), !value.isEmpty {
+                    artist = value
+                }
+            case .commonKeyAlbumName:
+                if let value = try? await item.load(.stringValue), !value.isEmpty {
+                    album = value
+                }
+            case .commonKeyArtwork:
+                if let value = try? await item.load(.dataValue), !value.isEmpty {
+                    artwork = value
+                }
+            default:
+                break
+            }
+        }
+
+        return Song(
+            title: title,
+            artist: artist,
+            album: album,
+            duration: assetDuration.seconds,
+            artworkData: artwork,
+            source: .libraryFile(filename: storedFilename),
+            contentFingerprint: fingerprint
+        )
+    }
+
+    // MARK: - Folder Scanning
+
+    private func audioFiles(in folderURL: URL) throws -> [URL] {
+        let resourceKeys: [URLResourceKey] = [
+            .isRegularFileKey,
+            .isSymbolicLinkKey
+        ]
+
+        guard let enumerator = FileManager.default.enumerator(
+            at: folderURL,
+            includingPropertiesForKeys: resourceKeys,
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else {
+            throw MusicImportError.cannotReadFolder(folderURL.lastPathComponent)
+        }
+
+        var files: [URL] = []
+
+        for case let fileURL as URL in enumerator {
+            let values = try? fileURL.resourceValues(forKeys: Set(resourceKeys))
+
+            guard values?.isRegularFile == true,
+                  values?.isSymbolicLink != true,
+                  isSupportedAudioFile(fileURL)
+            else {
+                continue
+            }
+
+            files.append(fileURL)
+        }
+
+        return files.sorted {
+            $0.path.localizedStandardCompare($1.path) == .orderedAscending
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func isSupportedAudioFile(_ url: URL) -> Bool {
+        supportedExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    private func libraryFolder() throws -> URL {
+        guard let folder = Song.musicLibraryDirectory else {
+            throw MusicImportError.libraryDirectoryUnavailable
+        }
+
+        try FileManager.default.createDirectory(
+            at: folder,
+            withIntermediateDirectories: true
+        )
+
+        return folder
+    }
+}
+
+// MARK: - Import Errors
+
+enum MusicImportError: LocalizedError {
+    case libraryDirectoryUnavailable
+    case cannotReadFolder(String)
+    case unsupportedFile(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .libraryDirectoryUnavailable:
+            return "Harmonia could not access its local Music directory."
+        case .cannotReadFolder(let name):
+            return "Harmonia could not read the folder '\(name)'."
+        case .unsupportedFile(let name):
+            return "'\(name)' is not a supported audio file."
+        }
+    }
 }
