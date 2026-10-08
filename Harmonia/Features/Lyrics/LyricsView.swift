@@ -33,8 +33,9 @@ struct LyricsView: View {
 
         ToolbarItem(placement: .principal) {
           VStack(spacing: 1) {
-            Text("Lyrics")
-              .font(.headline)
+            Text("LYRICS")
+              .font(.caption2.bold())
+              .tracking(1.4)
             Text(song.title)
               .font(.caption)
               .foregroundStyle(.secondary)
@@ -58,6 +59,9 @@ struct LyricsView: View {
     }
     .preferredColorScheme(.dark)
     .task(id: song.id) { await loadLyrics() }
+    .accessibilityAction(.escape) {
+      dismiss()
+    }
   }
 
   // MARK: - Background

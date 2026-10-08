@@ -135,10 +135,10 @@ struct NowPlayingView: View {
       PlaybackSettingsView(player: player)
         .presentationDetents([.medium, .large])
     }
-    .sheet(isPresented: $isShowingLyrics) {
+    // Lyrics is presented as a full-screen player mode rather than a detached sheet.
+    // Lyrics se presenta como un modo del reproductor a pantalla completa y no como una hoja separada.
+    .fullScreenCover(isPresented: $isShowingLyrics) {
       LyricsView(player: player, song: currentSong)
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
     }
     .preferredColorScheme(.dark)
   }
@@ -163,7 +163,13 @@ struct NowPlayingView: View {
       .shadow(radius: 35, y: 20)
       .contentShape(Rectangle())
       .gesture(trackSwipeGesture(containerWidth: width))
-      .accessibilityHint("Swipe left for next song or right for previous song")
+      .simultaneousGesture(
+        TapGesture()
+          .onEnded {
+            presentLyrics()
+          }
+      )
+      .accessibilityHint("Tap for lyrics. Swipe left for next song or right for previous song")
     }
     .frame(height: 310)
   }
@@ -539,8 +545,7 @@ struct NowPlayingView: View {
       // Lyrics powered by LRCLIB.
       // Letras proporcionadas por LRCLIB.
       Button {
-        isShowingLyrics = true
-        HapticService.selection()
+        presentLyrics()
       } label: {
         Image(systemName: "quote.bubble")
       }
@@ -570,6 +575,14 @@ struct NowPlayingView: View {
   }
 
   // MARK: - Helpers
+
+  /// Opens Lyrics as the second immersive face of Now Playing.
+  /// Abre Lyrics como la segunda cara inmersiva de Now Playing.
+  private func presentLyrics() {
+    guard !isShowingLyrics else { return }
+    HapticService.selection()
+    isShowingLyrics = true
+  }
 
   /// Remaining playback time for the current song.
   /// Tiempo restante de reproducción de la canción actual.
